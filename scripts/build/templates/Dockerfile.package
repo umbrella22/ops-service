@@ -1,0 +1,63 @@
+# Docker 镜像 - 基于预编译二进制文件
+# 此 Dockerfile 用于打包已编译的二进制文件，不包含源码编译过程
+
+# 构建参数 - 在构建时通过 --platform 自动设置
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+# 基础镜像
+FROM debian:bookworm-slim
+
+# 添加标签
+LABEL maintainer="ops-system"
+LABEL description="Ops System - {{PLATFORM}}"
+LABEL version="{{VERSION}}"
+
+# 安装运行时依赖和 Docker CLI
+# 注意：仅安装 Docker CLI，不安装 Docker Daemon
+# Docker Daemon 通过挂载 /var/run/docker.sock 从宿主机访问
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建非 root 用户并添加到 docker 组
+# 这样用户可以访问宿主机的 Docker Daemon
+RUN groupadd -r opsuser && \
+    groupadd -r docker && \
+    useradd -r -g opsuser -G docker opsuser
+
+# 创建应用目录
+RUN mkdir -p /app/migrations && \
+    mkdir -p /app/config && \
+    chown -R opsuser:opsuser /app
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制二进制文件（从构建产物）
+COPY --chown=opsuser:opsuser bin/{{BINARY_NAME}} /app/
+
+# 复制数据库迁移脚本
+COPY --chown=opsuser:opsuser migrations /app/migrations/
+
+# 复制配置文件示例
+COPY --chown=opsuser:opsuser config /app/config/
+
+# 复制部署文档
+COPY --chown=opsuser:opsuser docs /app/docs/
+
+# 切换到非 root 用户
+USER opsuser
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动应用
+ENTRYPOINT ["/app/{{BINARY_NAME}}"]

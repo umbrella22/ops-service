@@ -1,0 +1,42 @@
+[Unit]
+Description={{BINARY_NAME}} Service
+Documentation=https://github.com/your-org/{{BINARY_NAME}}
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User={{BINARY_NAME}}
+Group={{BINARY_NAME}}
+WorkingDirectory=/var/lib/{{BINARY_NAME}}
+ExecStart=/usr/local/bin/{{BINARY_NAME}}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{BINARY_NAME}}
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/{{BINARY_NAME}}
+ReadWritePaths=/var/log/{{BINARY_NAME}}
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Environment
+Environment="RUST_LOG=info"
+EnvironmentFile=-/etc/{{BINARY_NAME}}/env
+
+# Performance
+Nice=10
+CPUAccounting=true
+MemoryAccounting=true
+
+[Install]
+WantedBy=multi-user.target

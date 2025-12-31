@@ -1,0 +1,83 @@
+# Docker Compose 安全配置示例
+# 本配置展示了如何安全地运行 {{BINARY_NAME}} 并支持 Runner 功能
+
+version: '3.8'
+
+services:
+  {{BINARY_NAME}}:
+    image: {{BINARY_NAME}}:latest-amd64
+    container_name: {{BINARY_NAME}}
+    ports:
+      - "3000:3000"
+
+    # 挂载 Docker Socket（支持 Runner 功能）
+    # 安全提示：仅在内网或受信任环境中使用
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    # 环境变量
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/{{BINARY_NAME}}
+      - RUST_LOG=info
+      # 限制 Runner 使用的 Docker 网络
+      - DOCKER_NETWORK={{BINARY_NAME}}-network
+      # Runner 工作目录前缀（防止误删其他目录）
+      - RUNNER_WORK_DIR=/tmp/{{BINARY_NAME}}-workspace
+
+    # 安全加固
+    security_opt:
+      # 禁用特权提升
+      - no-new-privileges:true
+
+    # 资源限制（防止任务耗尽宿主机资源）
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # 只读根文件系统（可选，增强安全性）
+    # 如果需要，可以挂载 tmpfs 用于临时文件
+    # read_only: true
+    # tmpfs:
+    #   - /tmp:rw,size=100M
+
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - {{BINARY_NAME}}-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  db:
+    image: postgres:15-bookworm
+    container_name: {{BINARY_NAME}}-db
+    environment:
+      - POSTGRES_DB={{BINARY_NAME}}
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - {{BINARY_NAME}}-network
+
+# 自定义网络（Runner 容器将加入此网络）
+networks:
+  {{BINARY_NAME}}-network:
+    driver: bridge
+    ipam:
+      config:
+        # 固定子网（便于网络策略控制）
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres_data:
