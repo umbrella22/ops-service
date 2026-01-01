@@ -142,12 +142,18 @@ log_info "Validating checksums..."
 if [ -f "$BUILD_DIR/CHECKSUM" ]; then
     # Check if all files in CHECKSUM actually exist
     MISSING_FILES=0
-    while read -r checksum file; do
-        if [[ ! "$file" =~ ^# ]] && [ -n "$file" ]; then
-            if [ ! -f "$BUILD_DIR/$file" ]; then
-                log_error "File in CHECKSUM missing: $file"
-                MISSING_FILES=$((MISSING_FILES + 1))
-            fi
+    while read -r line; do
+        # Skip empty lines and comments
+        if [[ -z "$line" ]] || [[ "$line" =~ ^# ]]; then
+            continue
+        fi
+
+        # Extract filename (second field in checksum line)
+        file=$(echo "$line" | awk '{print $2}')
+
+        if [ -n "$file" ] && [ ! -f "$BUILD_DIR/$file" ]; then
+            log_error "File in CHECKSUM missing: $file"
+            MISSING_FILES=$((MISSING_FILES + 1))
         fi
     done < "$BUILD_DIR/CHECKSUM"
 
