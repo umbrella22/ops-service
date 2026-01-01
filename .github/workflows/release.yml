@@ -189,10 +189,12 @@ jobs:
     - name: Prepare release assets
       run: |
         mkdir -p release
-        cp artifacts/x86_64/dist/*.tar.gz release/
-        cp artifacts/x86_64/dist/*.sha256 release/
-        cp artifacts/arm64/dist/*.tar.gz release/
-        cp artifacts/arm64/dist/*.sha256 release/
+        # Copy x86_64 files
+        find artifacts/x86_64 -name "*.tar.gz" -exec cp {} release/ \;
+        find artifacts/x86_64 -name "*.sha256" -exec cp {} release/ \;
+        # Copy ARM64 files
+        find artifacts/arm64 -name "*.tar.gz" -exec cp {} release/ \;
+        find artifacts/arm64 -name "*.sha256" -exec cp {} release/ \;
         ls -lh release/
 
     - name: Generate release notes
