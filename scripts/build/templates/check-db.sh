@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 SERVICE_NAME="{{BINARY_NAME}}"
-CONFIG_DIR="/etc/${SERVICE_NAME}}"
+CONFIG_DIR="/etc/${SERVICE_NAME}"
 DATA_DIR="/var/lib/${SERVICE_NAME}"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }

@@ -78,33 +78,85 @@ fi
 # Step 3: Check database
 echo ""
 log_info "Step 3/4: Verifying database setup..."
-if [ -f "$SCRIPT_DIR/check-db.sh" ]; then
-    bash "$SCRIPT_DIR/check-db.sh" || {
-        log_warn "Database check had warnings, but continuing..."
-    }
+
+# Check if Docker mode is being used
+if [ -d "/etc/${BINARY_NAME}/docker" ]; then
+    log_info "Docker installation detected, skipping database check"
+    log_warn "Docker containers will handle database setup automatically"
 else
-    log_warn "check-db.sh not found, skipping database verification"
+    if [ -f "$SCRIPT_DIR/check-db.sh" ]; then
+        bash "$SCRIPT_DIR/check-db.sh" || {
+            log_warn "Database check had warnings, but continuing..."
+        }
+    else
+        log_warn "check-db.sh not found, skipping database verification"
+    fi
 fi
 
 # Step 4: Start service
 echo ""
-log_info "Step 4/4: Starting ${BINARY_NAME} service..."
-if [ -f "$SCRIPT_DIR/start.sh" ]; then
-    bash "$SCRIPT_DIR/start.sh"
-else
-    log_error "start.sh not found"
-    exit 1
-fi
 
-echo ""
-log_success "========================================="
-log_success "Initialization Complete!"
-log_success "========================================="
-echo ""
-log_info "Your ${BINARY_NAME} service is now running!"
-echo ""
-log_info "Next steps:"
-log_info "  - Check status: systemctl status ${BINARY_NAME}"
-log_info "  - View logs: journalctl -u ${BINARY_NAME} -f"
-log_info "  - Run on boot: systemctl enable ${BINARY_NAME}"
-echo ""
+# Check if Docker mode is being used
+if [ -d "/etc/${BINARY_NAME}/docker" ]; then
+    log_info "Step 4/4: Docker installation detected"
+    log_info "========================================="
+    log_success "Docker Installation completed!"
+    log_success "========================================="
+    echo ""
+
+    # Display seed data status
+    if [ -f "/etc/${BINARY_NAME}/docker/.env" ] && grep -q "SEED=true" "/etc/${BINARY_NAME}/docker/.env"; then
+        log_info "Configuration:"
+        log_success "  Seed data: ✓ Enabled"
+        log_info "    - Demo accounts will be created"
+        log_info "    - Sample assets will be loaded"
+    fi
+    echo ""
+
+    log_info "Quick start:"
+    log_info "  1. Review configuration: cat /etc/${BINARY_NAME}/docker/.env"
+    log_info "  2. Start services: cd /etc/${BINARY_NAME}/docker && docker-compose up -d"
+    log_info "  3. View logs: docker-compose logs -f"
+    log_info "  4. Stop services: docker-compose down"
+    echo ""
+
+    log_info "Services deployed:"
+    log_info "  - PostgreSQL database (port 5432, localhost only)"
+    log_info "  - API service (internal, accessible via Nginx)"
+    log_info "  - Nginx reverse proxy (ports 80, 443)"
+    echo ""
+
+    log_info "Default accounts after first start:"
+    log_info "  - admin / Admin123! (Administrator)"
+    log_info "  - demo  / Demo123!  (Operator)"
+    echo ""
+    log_warn "Remember to change default passwords!"
+    echo ""
+    log_info "To start the services now, run:"
+    log_info "  cd /etc/${BINARY_NAME}/docker"
+    log_info "  docker-compose up -d"
+    echo ""
+    log_info "For more information, see the documentation in the docs/ directory."
+else
+    # Systemd mode
+    log_info "Step 4/4: Starting ${BINARY_NAME} service..."
+    if [ -f "$SCRIPT_DIR/start.sh" ]; then
+        bash "$SCRIPT_DIR/start.sh"
+    else
+        log_error "start.sh not found"
+        exit 1
+    fi
+
+    echo ""
+    log_success "========================================="
+    log_success "Initialization Complete!"
+    log_success "========================================="
+    echo ""
+    log_info "Your ${BINARY_NAME} service is now running!"
+    echo ""
+    log_info "Next steps:"
+    log_info "  - Check status: systemctl status ${BINARY_NAME}"
+    log_info "  - View logs: journalctl -u ${BINARY_NAME} -f"
+    log_info "  - Run on boot: systemctl enable ${BINARY_NAME}"
+    echo ""
+fi
