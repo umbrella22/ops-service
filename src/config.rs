@@ -205,9 +205,12 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        // 清理环境变量
+        // 清理所有可能的环境变量
         std::env::remove_var("OPS_DATABASE__URL");
-        std::env::remove_var("OPS_DATABASE__URL");
+        std::env::remove_var("OPS_SERVER__ADDR");
+        std::env::remove_var("OPS_LOGGING__LEVEL");
+        std::env::remove_var("OPS_LOGGING__FORMAT");
+        std::env::remove_var("OPS_SECURITY__JWT_SECRET");
 
         // 设置测试环境变量
         std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db");
