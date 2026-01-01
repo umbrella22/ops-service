@@ -8,9 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  PGUSER: postgres
-  PGHOST: localhost
-  TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ops_system_test
 
 jobs:
   fmt:
@@ -43,21 +40,6 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ops_system_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
     - uses: actions/checkout@v4
 
@@ -77,19 +59,8 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-
 
-    - name: Setup PostgreSQL
-      run: |
-        # 安装 sqlx-cli
-        cargo install sqlx-cli --no-default-features --features rustls,postgres
-
-        # 创建数据库
-        sqlx database create --database-url ${{ env.TEST_DATABASE_URL }}
-
-        # 运行迁移
-        sqlx migrate run --database-url ${{ env.TEST_DATABASE_URL }}
-
     - name: Run tests
-      run: cargo test --verbose -- --test-threads=1
+      run: cargo test --lib --verbose
 
     - name: Build release
       run: cargo build --release
