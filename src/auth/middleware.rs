@@ -43,13 +43,7 @@ pub fn extract_token(headers: &HeaderMap) -> Result<String, AppError> {
     headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| {
-            if s.starts_with("Bearer ") {
-                Some(s[7..].to_string())
-            } else {
-                None
-            }
-        })
+        .and_then(|s| s.strip_prefix("Bearer ").map(|t| t.to_string()))
         .ok_or(AppError::Unauthorized)
 }
 

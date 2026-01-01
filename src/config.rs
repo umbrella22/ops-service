@@ -120,7 +120,7 @@ impl AppConfig {
     /// 验证配置合法性
     fn validate(&self) -> Result<(), ConfigError> {
         // 验证端口范围
-        if let Some(port_str) = self.server.addr.split(':').last() {
+        if let Some(port_str) = self.server.addr.split(':').next_back() {
             if let Ok(port) = port_str.parse::<u16>() {
                 if port < 1024 {
                     return Err(ConfigError::Message("Server port should be >= 1024".to_string()));

@@ -32,7 +32,7 @@ pub async fn metrics_export(State(state): State<Arc<AppState>>) -> Json<MetricsR
         http_request_duration_p50_ms: 0.0,
         http_request_duration_p95_ms: 0.0,
         http_request_duration_p99_ms: 0.0,
-        db_pool_size: state.db.size() as u32,
+        db_pool_size: state.db.size(),
         db_pool_idle: state.db.num_idle() as u32,
         process_uptime_secs: crate::handlers::health::get_uptime(),
     })

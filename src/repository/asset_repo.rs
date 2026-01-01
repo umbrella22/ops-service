@@ -95,7 +95,7 @@ impl AssetRepository {
         .bind(&req.name)
         .bind(&req.description)
         .bind(&req.environment)
-        .bind(&req.parent_id)
+        .bind(req.parent_id)
         .fetch_optional(&self.db)
         .await?;
 
@@ -275,10 +275,10 @@ impl AssetRepository {
         .bind(&req.display_name)
         .bind(&req.address)
         .bind(req.port)
-        .bind(&req.group_id)
+        .bind(req.group_id)
         .bind(&req.environment)
         .bind(&req.tags)
-        .bind(&req.owner_id)
+        .bind(req.owner_id)
         .bind(&req.status)
         .bind(&req.notes)
         .bind(&req.os_type)

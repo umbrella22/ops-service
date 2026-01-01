@@ -89,10 +89,7 @@ impl PermissionService {
                 // 必须要求 group 范围且值匹配
                 if let Some("group") = required_type {
                     if let Some(required) = required_value {
-                        return binding
-                            .scope_value
-                            .as_ref()
-                            .map_or(false, |v| v == required);
+                        return binding.scope_value.as_ref().is_some_and(|v| v == required);
                     }
                 }
                 false
@@ -101,10 +98,7 @@ impl PermissionService {
                 // 必须要求 environment 范围且值匹配
                 if let Some("environment") = required_type {
                     if let Some(required) = required_value {
-                        return binding
-                            .scope_value
-                            .as_ref()
-                            .map_or(false, |v| v == required);
+                        return binding.scope_value.as_ref().is_some_and(|v| v == required);
                     }
                 }
                 false

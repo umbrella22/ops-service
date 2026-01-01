@@ -4,6 +4,25 @@ use crate::{error::AppError, models::audit::*, repository::audit_repo::AuditRepo
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// 审计日志参数结构体
+#[derive(Debug, Clone)]
+pub struct AuditLogParams<'a> {
+    pub subject_id: Uuid,
+    pub subject_type: &'a str,
+    pub subject_name: Option<&'a str>,
+    pub action: &'a str,
+    pub resource_type: &'a str,
+    pub resource_id: Option<Uuid>,
+    pub resource_name: Option<&'a str>,
+    pub changes: Option<serde_json::Value>,
+    pub changes_summary: Option<&'a str>,
+    pub source_ip: Option<&'a str>,
+    pub user_agent: Option<&'a str>,
+    pub trace_id: Option<&'a str>,
+    pub result: &'a str,
+    pub error_message: Option<&'a str>,
+}
+
 pub struct AuditService {
     db: PgPool,
 }
@@ -14,40 +33,24 @@ impl AuditService {
     }
 
     /// 记录审计日志条目
-    pub async fn log_action(
-        &self,
-        subject_id: Uuid,
-        subject_type: &str,
-        subject_name: Option<&str>,
-        action: &str,
-        resource_type: &str,
-        resource_id: Option<Uuid>,
-        resource_name: Option<&str>,
-        changes: Option<serde_json::Value>,
-        changes_summary: Option<&str>,
-        source_ip: Option<&str>,
-        user_agent: Option<&str>,
-        trace_id: Option<&str>,
-        result: &str,
-        error_message: Option<&str>,
-    ) -> Result<(), AppError> {
+    pub async fn log_action(&self, params: AuditLogParams<'_>) -> Result<(), AppError> {
         let log = AuditLog {
             id: Uuid::new_v4(),
-            subject_id,
-            subject_type: subject_type.to_string(),
-            subject_name: subject_name.map(|s| s.to_string()),
-            action: action.to_string(),
-            resource_type: resource_type.to_string(),
-            resource_id,
-            resource_name: resource_name.map(|s| s.to_string()),
-            changes,
-            changes_summary: changes_summary.map(|s| s.to_string()),
-            source_ip: source_ip.map(|s| s.to_string()),
-            user_agent: user_agent.map(|s| s.to_string()),
-            trace_id: trace_id.map(|s| s.to_string()),
+            subject_id: params.subject_id,
+            subject_type: params.subject_type.to_string(),
+            subject_name: params.subject_name.map(|s| s.to_string()),
+            action: params.action.to_string(),
+            resource_type: params.resource_type.to_string(),
+            resource_id: params.resource_id,
+            resource_name: params.resource_name.map(|s| s.to_string()),
+            changes: params.changes,
+            changes_summary: params.changes_summary.map(|s| s.to_string()),
+            source_ip: params.source_ip.map(|s| s.to_string()),
+            user_agent: params.user_agent.map(|s| s.to_string()),
+            trace_id: params.trace_id.map(|s| s.to_string()),
             request_id: None, // 可以从请求上下文中提取
-            result: result.to_string(),
-            error_message: error_message.map(|s| s.to_string()),
+            result: params.result.to_string(),
+            error_message: params.error_message.map(|s| s.to_string()),
             occurred_at: chrono::Utc::now(),
         };
 
