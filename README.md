@@ -398,54 +398,7 @@ sudo systemctl start ops-system
 sudo ./scripts/status.sh
 ```
 
-详细部署文档请参考构建包中的 `docs/DEPLOY.md`。
-
-## 🔄 CI/CD
-
-项目使用 GitHub Actions 进行持续集成和自动发布。
-
-### 持续集成 (CI)
-
-每次 push 或创建 PR 时会自动运行：
-
-- ✅ 代码格式检查
-- 🔍 Clippy 代码检查
-- 🧪 运行所有测试（53个测试）
-- 📦 构建并验证包
-
-### 自动发布 (CD)
-
-#### 创建 Release
-
-推送版本 tag 即可自动构建和发布：
-
-```bash
-# 创建版本 tag
-git tag v1.0.0
-
-# 推送 tag
-git push origin v1.0.0
-```
-
-GitHub Actions 会自动：
-1. 为 x86_64 和 ARM64 平台构建包
-2. 创建发布归档（tar.gz）
-3. 生成 SHA256 校验和
-4. 创建 GitHub Release
-
-#### 下载发布版本
-
-访问 [Releases 页面](../../releases) 下载对应平台的发布包。
-
-#### 手动触发
-
-也可以在 GitHub Actions 页面手动触发构建工作流。
-
-详细说明请查看 [.github/workflows/README.md](.github/workflows/README.md)。
-
 ## 🐳 部署指南
-
-详见: [USER_GUIDE.md](USER_GUIDE.md)
 
 ### Docker 部署（推荐）
 
@@ -567,15 +520,14 @@ location / {
 
 ## 🤝 贡献
 
-欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md)
+欢迎贡献！
 
 ## 📄 许可证
 
 MIT License
 
-## 🆘 支持
+## 支持
 
-- 🧪 [测试文档](tests/README.md)
 - 🐛 [问题反馈](https://github.com/umbrella22/ops-service/issues)
 
 ## 🙏 致谢
