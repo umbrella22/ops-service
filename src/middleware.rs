@@ -32,10 +32,7 @@ pub struct AppState {
 
 /// 请求追踪中间件
 /// 为每个请求生成 trace_id 和 request_id，并记录指标
-pub async fn request_tracking_middleware(
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn request_tracking_middleware(req: Request, next: Next) -> Response {
     // 生成或提取 trace_id/request_id
     let trace_id = extract_or_generate_trace_id(req.headers());
     let request_id = Uuid::new_v4().to_string();

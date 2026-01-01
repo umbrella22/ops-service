@@ -1,11 +1,8 @@
 //! JWT 认证中间件
 
-use crate::{
-    auth::jwt::JwtService,
-    error::AppError,
-};
+use crate::{auth::jwt::JwtService, error::AppError};
 use axum::{
-    extract::{Request, State, FromRequestParts},
+    extract::{FromRequestParts, Request, State},
     http::HeaderMap,
     middleware::Next,
     response::Response,

@@ -25,7 +25,7 @@ impl AuditRepository {
                 request_id, result, error_message, occurred_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            "#
+            "#,
         )
         .bind(log.id)
         .bind(log.subject_id)
@@ -126,9 +126,7 @@ impl AuditRepository {
             .fetch_all(&self.db)
             .await?
             .iter()
-            .map(|row: &sqlx::postgres::PgRow| {
-                sqlx::FromRow::from_row(row).unwrap()
-            })
+            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
             .collect();
 
         Ok(logs)
@@ -255,9 +253,7 @@ impl AuditRepository {
             .fetch_all(&self.db)
             .await?
             .iter()
-            .map(|row: &sqlx::postgres::PgRow| {
-                sqlx::FromRow::from_row(row).unwrap()
-            })
+            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
             .collect();
 
         Ok(events)

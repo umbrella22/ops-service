@@ -2,11 +2,11 @@
 //! 提供测试辅助函数和测试工具
 
 use ops_system::{
-    config::{AppConfig, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig},
-    middleware::AppState,
-    services::{AuthService, PermissionService, AuditService},
     auth::jwt::JwtService,
+    config::{AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig},
     db,
+    middleware::AppState,
+    services::{AuditService, AuthService, PermissionService},
 };
 use secrecy::Secret;
 use sqlx::PgPool;
@@ -15,8 +15,9 @@ use std::sync::Arc;
 /// 创建测试配置
 pub fn create_test_config() -> AppConfig {
     // 从环境变量获取测试数据库 URL，如果没有则使用默认值
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432/ops_system_test".to_string());
+    let database_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://postgres:postgres@localhost:5432/ops_system_test".to_string()
+    });
 
     AppConfig {
         server: ServerConfig {
@@ -37,8 +38,8 @@ pub fn create_test_config() -> AppConfig {
         },
         security: SecurityConfig {
             jwt_secret: Secret::new("test-secret-key-for-testing-only-min-32-chars".to_string()),
-            access_token_exp_secs: 300,     // 5分钟用于测试
-            refresh_token_exp_secs: 3600,   // 1小时用于测试
+            access_token_exp_secs: 300,   // 5分钟用于测试
+            refresh_token_exp_secs: 3600, // 1小时用于测试
             password_min_length: 8,
             password_require_uppercase: true,
             password_require_digit: true,
@@ -54,10 +55,14 @@ pub fn create_test_config() -> AppConfig {
 
 /// 初始化测试数据库
 pub async fn setup_test_db(config: &AppConfig) -> PgPool {
-    let pool = db::create_pool(&config.database).await.expect("Failed to create test database pool");
+    let pool = db::create_pool(&config.database)
+        .await
+        .expect("Failed to create test database pool");
 
     // 运行迁移
-    db::run_migrations(&pool).await.expect("Failed to run migrations");
+    db::run_migrations(&pool)
+        .await
+        .expect("Failed to run migrations");
 
     // 清理测试数据（如果有）
     sqlx::query("TRUNCATE TABLE audit_logs, refresh_tokens, assets_hosts, asset_groups, users, roles CASCADE")
@@ -71,12 +76,10 @@ pub async fn setup_test_db(config: &AppConfig) -> PgPool {
 /// 创建测试应用状态
 pub async fn create_test_app_state(pool: PgPool) -> Arc<AppState> {
     let config = create_test_config();
-    let jwt_service = Arc::new(JwtService::from_config(&config).expect("Failed to create JWT service"));
-    let auth_service = Arc::new(AuthService::new(
-        pool.clone(),
-        jwt_service.clone(),
-        Arc::new(config.clone()),
-    ));
+    let jwt_service =
+        Arc::new(JwtService::from_config(&config).expect("Failed to create JWT service"));
+    let auth_service =
+        Arc::new(AuthService::new(pool.clone(), jwt_service.clone(), Arc::new(config.clone())));
     let permission_service = Arc::new(PermissionService::new(pool.clone()));
     let audit_service = Arc::new(AuditService::new(pool.clone()));
 
@@ -105,8 +108,8 @@ pub async fn create_test_user(
     password: &str,
     email: &str,
 ) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
-    use ops_system::auth::password::PasswordHasher;
     use chrono::Utc;
+    use ops_system::auth::password::PasswordHasher;
 
     let hasher = PasswordHasher::new();
     let password_hash = hasher.hash(password)?;
@@ -118,7 +121,7 @@ pub async fn create_test_user(
         INSERT INTO users (id, username, password_hash, email, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
-        "#
+        "#,
     )
     .bind(user_id)
     .bind(username)
@@ -147,7 +150,7 @@ pub async fn create_test_role(
         INSERT INTO roles (id, name, description, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id
-        "#
+        "#,
     )
     .bind(role_id)
     .bind(name)

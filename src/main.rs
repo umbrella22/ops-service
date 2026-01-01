@@ -5,8 +5,8 @@ use ops_system::{
     config::AppConfig, db, handlers::health, middleware::AppState, routes, telemetry,
 };
 use std::sync::Arc;
-use tokio::signal;
 use tokio::net::TcpListener;
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,10 +23,7 @@ async fn main() -> anyhow::Result<()> {
     telemetry::init_telemetry(&config);
     telemetry::init_metrics();
 
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        "Ops System P0 starting..."
-    );
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Ops System P0 starting...");
 
     // 3. 数据库连接池 + 迁移
     let db_pool = db::create_pool(&config.database).await?;
@@ -44,8 +41,12 @@ async fn main() -> anyhow::Result<()> {
             std::sync::Arc::new(ops_system::auth::jwt::JwtService::from_config(&config)?),
             std::sync::Arc::new(config.clone()),
         )),
-        permission_service: std::sync::Arc::new(ops_system::services::PermissionService::new(db_pool.clone())),
-        audit_service: std::sync::Arc::new(ops_system::services::AuditService::new(db_pool.clone())),
+        permission_service: std::sync::Arc::new(ops_system::services::PermissionService::new(
+            db_pool.clone(),
+        )),
+        audit_service: std::sync::Arc::new(ops_system::services::AuditService::new(
+            db_pool.clone(),
+        )),
         jwt_service: std::sync::Arc::new(ops_system::auth::jwt::JwtService::from_config(&config)?),
     });
 

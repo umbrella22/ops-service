@@ -1,15 +1,15 @@
 //! 服务层单元测试
 
 use ops_system::{
-    services::{AuthService, PermissionService, AuditService},
-    models::auth::*,
     auth::jwt::JwtService,
     config::AppConfig,
+    models::auth::*,
+    services::{AuditService, AuthService, PermissionService},
 };
 use secrecy::Secret;
 
 mod common;
-use common::{create_test_config, create_test_user, create_test_role, assign_role_to_user};
+use common::{assign_role_to_user, create_test_config, create_test_role, create_test_user};
 
 #[tokio::test]
 async fn test_auth_service_login_success() {
@@ -113,7 +113,8 @@ async fn test_auth_service_refresh_token() {
         .expect("Failed to create test user");
 
     let jwt_service = std::sync::Arc::new(JwtService::from_config(&config).unwrap());
-    let auth_service = AuthService::new(pool.clone(), jwt_service.clone(), std::sync::Arc::new(config.clone()));
+    let auth_service =
+        AuthService::new(pool.clone(), jwt_service.clone(), std::sync::Arc::new(config.clone()));
 
     // 先登录
     let login_req = LoginRequest {
@@ -131,9 +132,7 @@ async fn test_auth_service_refresh_token() {
         refresh_token: login_response.refresh_token.clone(),
     };
 
-    let result = auth_service
-        .refresh_token(refresh_req, "127.0.0.1")
-        .await;
+    let result = auth_service.refresh_token(refresh_req, "127.0.0.1").await;
 
     assert!(result.is_ok());
     let new_tokens = result.unwrap();

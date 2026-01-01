@@ -89,7 +89,10 @@ impl PermissionService {
                 // 必须要求 group 范围且值匹配
                 if let Some("group") = required_type {
                     if let Some(required) = required_value {
-                        return binding.scope_value.as_ref().map_or(false, |v| v == required);
+                        return binding
+                            .scope_value
+                            .as_ref()
+                            .map_or(false, |v| v == required);
                     }
                 }
                 false
@@ -98,7 +101,10 @@ impl PermissionService {
                 // 必须要求 environment 范围且值匹配
                 if let Some("environment") = required_type {
                     if let Some(required) = required_value {
-                        return binding.scope_value.as_ref().map_or(false, |v| v == required);
+                        return binding
+                            .scope_value
+                            .as_ref()
+                            .map_or(false, |v| v == required);
                     }
                 }
                 false
@@ -147,7 +153,10 @@ impl PermissionService {
     }
 
     /// 获取用户的所有权限摘要
-    pub async fn get_user_permissions(&self, user_id: Uuid) -> Result<Vec<PermissionSummary>, AppError> {
+    pub async fn get_user_permissions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<PermissionSummary>, AppError> {
         let role_repo = RoleRepository::new(self.db.clone());
         let bindings = role_repo.get_user_role_bindings(user_id).await?;
 
@@ -167,12 +176,8 @@ impl PermissionService {
         }
 
         // 去重
-        permissions.sort_by(|a, b| {
-            (&a.resource, &a.action).cmp(&(&b.resource, &b.action))
-        });
-        permissions.dedup_by(|a, b| {
-            a.resource == b.resource && a.action == b.action
-        });
+        permissions.sort_by(|a, b| (&a.resource, &a.action).cmp(&(&b.resource, &b.action)));
+        permissions.dedup_by(|a, b| a.resource == b.resource && a.action == b.action);
 
         Ok(permissions)
     }

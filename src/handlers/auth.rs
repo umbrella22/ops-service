@@ -1,19 +1,11 @@
 //! 认证相关的 HTTP 处理器
 
 use crate::{
-    auth::middleware::AuthContext,
-    error::AppError,
-    models::auth::*,
-    middleware::AppState,
+    auth::middleware::AuthContext, error::AppError, middleware::AppState, models::auth::*,
 };
-use std::sync::Arc;
-use axum::{
-    extract::State,
-    http::HeaderMap,
-    Json,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::json;
+use std::sync::Arc;
 
 /// 登录
 pub async fn login(
@@ -43,10 +35,7 @@ pub async fn refresh_token(
 ) -> Result<impl IntoResponse, AppError> {
     let client_ip = get_client_ip(&headers).unwrap_or("unknown".to_string());
 
-    let token_pair = state
-        .auth_service
-        .refresh_token(req, &client_ip)
-        .await?;
+    let token_pair = state.auth_service.refresh_token(req, &client_ip).await?;
 
     Ok(Json(token_pair))
 }
@@ -70,10 +59,7 @@ pub async fn logout_all(
     State(state): State<Arc<AppState>>,
     auth_context: AuthContext,
 ) -> Result<impl IntoResponse, AppError> {
-    let revoked_count = state
-        .auth_service
-        .logout_all(auth_context.user_id)
-        .await?;
+    let revoked_count = state.auth_service.logout_all(auth_context.user_id).await?;
 
     Ok(Json(json!({
         "message": format!("已从 {} 个设备登出", revoked_count)
@@ -81,9 +67,7 @@ pub async fn logout_all(
 }
 
 /// 获取当前用户信息
-pub async fn get_current_user(
-    auth_context: AuthContext,
-) -> Result<impl IntoResponse, AppError> {
+pub async fn get_current_user(auth_context: AuthContext) -> Result<impl IntoResponse, AppError> {
     Ok(Json(json!({
         "id": auth_context.user_id,
         "username": auth_context.username,

@@ -22,9 +22,7 @@ pub struct MetricsResponse {
 }
 
 /// 指标暴露端点
-pub async fn metrics_export(
-    State(state): State<Arc<AppState>>,
-) -> Json<MetricsResponse> {
+pub async fn metrics_export(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
     // 简化实现：返回基础指标
     // 实际生产环境应使用 Prometheus exporter
 

@@ -1,6 +1,6 @@
 //! User repository (数据库访问层)
 
-use crate::{error::AppError, models::user::*, models::role::RoleBinding};
+use crate::{error::AppError, models::role::RoleBinding, models::user::*};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -15,36 +15,37 @@ impl UserRepository {
 
     /// 根据用户名查找用户
     pub async fn find_by_username(&self, username: &str) -> Result<Option<User>, AppError> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE username = $1"
-        )
-        .bind(username)
-        .fetch_optional(&self.db)
-        .await?;
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(user)
     }
 
     /// 根据 ID 查找用户
     pub async fn find_by_id(&self, id: &Uuid) -> Result<Option<User>, AppError> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(user)
     }
 
     /// 创建用户
-    pub async fn create(&self, req: &CreateUserRequest, password_hash: &str, created_by: Uuid) -> Result<User, AppError> {
+    pub async fn create(
+        &self,
+        req: &CreateUserRequest,
+        password_hash: &str,
+        created_by: Uuid,
+    ) -> Result<User, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             INSERT INTO users (username, email, password_hash, full_name, department, created_by)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&req.username)
         .bind(&req.email)
@@ -59,7 +60,11 @@ impl UserRepository {
     }
 
     /// 更新用户
-    pub async fn update(&self, id: Uuid, req: &UpdateUserRequest) -> Result<Option<User>, AppError> {
+    pub async fn update(
+        &self,
+        id: Uuid,
+        req: &UpdateUserRequest,
+    ) -> Result<Option<User>, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             UPDATE users
@@ -71,7 +76,7 @@ impl UserRepository {
                 updated_at = NOW()
             WHERE id = $1
             RETURNING *
-            "#
+            "#,
         )
         .bind(id)
         .bind(&req.email)
@@ -85,7 +90,12 @@ impl UserRepository {
     }
 
     /// 更新密码
-    pub async fn update_password(&self, id: Uuid, password_hash: &str, force_change: bool) -> Result<bool, AppError> {
+    pub async fn update_password(
+        &self,
+        id: Uuid,
+        password_hash: &str,
+        force_change: bool,
+    ) -> Result<bool, AppError> {
         let result = sqlx::query(
             r#"
             UPDATE users
@@ -97,7 +107,7 @@ impl UserRepository {
                 locked_until = NULL,
                 updated_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(id)
         .bind(password_hash)
@@ -128,7 +138,7 @@ impl UserRepository {
                 last_failed_login_at = NOW(),
                 updated_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(id)
         .execute(&self.db)
@@ -147,7 +157,7 @@ impl UserRepository {
                 last_failed_login_at = NULL,
                 updated_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(id)
         .execute(&self.db)
@@ -157,7 +167,11 @@ impl UserRepository {
     }
 
     /// 锁定用户账户
-    pub async fn lock_account(&self, id: Uuid, locked_until: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> {
+    pub async fn lock_account(
+        &self,
+        id: Uuid,
+        locked_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
         sqlx::query(
             r#"
             UPDATE users
@@ -166,7 +180,7 @@ impl UserRepository {
                 locked_until = $2,
                 updated_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(id)
         .bind(locked_until)
@@ -191,7 +205,7 @@ impl UserRepository {
             FROM role_bindings rb
             JOIN roles r ON rb.role_id = r.id
             WHERE rb.user_id = $1
-            "#
+            "#,
         )
         .bind(user_id)
         .fetch_all(&self.db)
@@ -203,7 +217,7 @@ impl UserRepository {
     /// 列出所有用户
     pub async fn list(&self, limit: i64, offset: i64) -> Result<Vec<User>, AppError> {
         let users = sqlx::query_as::<_, User>(
-            "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+            "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
         .bind(offset)

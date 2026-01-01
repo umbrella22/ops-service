@@ -2,8 +2,10 @@
 
 use crate::{config::AppConfig, error::AppError};
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString},
-    Argon2, Algorithm, Params, Version,
+    password_hash::{
+        rand_core::OsRng, PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString,
+    },
+    Algorithm, Argon2, Params, Version,
 };
 
 /// Password hasher with configurable parameters
@@ -16,14 +18,9 @@ impl PasswordHasher {
     pub fn new() -> Self {
         // OWASP recommended parameters (as of 2024)
         // m=64MiB, t=3 iterations, p=4 lanes
-        let params = Params::new(65536, 3, 4, None)
-            .expect("Invalid Argon2 params");
+        let params = Params::new(65536, 3, 4, None).expect("Invalid Argon2 params");
 
-        let argon2 = Argon2::new(
-            Algorithm::Argon2id,
-            Version::V0x13,
-            params,
-        );
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
         Self { argon2 }
     }
@@ -71,25 +68,23 @@ impl PasswordHasher {
         // Check uppercase
         if policy.password_require_uppercase && !password.chars().any(|c| c.is_uppercase()) {
             return Err(AppError::BadRequest(
-                "Password must contain at least one uppercase letter".to_string()
+                "Password must contain at least one uppercase letter".to_string(),
             ));
         }
 
         // Check digit
         if policy.password_require_digit && !password.chars().any(|c| c.is_ascii_digit()) {
             return Err(AppError::BadRequest(
-                "Password must contain at least one digit".to_string()
+                "Password must contain at least one digit".to_string(),
             ));
         }
 
         // Check special character
         if policy.password_require_special {
-            let has_special = password.chars().any(|c| {
-                !c.is_alphanumeric()
-            });
+            let has_special = password.chars().any(|c| !c.is_alphanumeric());
             if !has_special {
                 return Err(AppError::BadRequest(
-                    "Password must contain at least one special character".to_string()
+                    "Password must contain at least one special character".to_string(),
                 ));
             }
         }

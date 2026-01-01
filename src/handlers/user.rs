@@ -1,18 +1,16 @@
 //! 用户管理的 HTTP 处理器
 
 use crate::{
-    auth::password::PasswordHasher,
-    auth::middleware::AuthContext,
-    error::AppError,
-    middleware::AppState,
-    models::user::*,
+    auth::middleware::AuthContext, auth::password::PasswordHasher, error::AppError,
+    middleware::AppState, models::user::*,
 };
-use std::sync::Arc;
 use axum::{
     extract::{Path, State},
-    Json, response::IntoResponse,
+    response::IntoResponse,
+    Json,
 };
 use serde_json::json;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 列出用户
@@ -80,8 +78,7 @@ pub async fn get_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.find_by_id(&id).await?
-        .ok_or(AppError::NotFound)?;
+    let user = repo.find_by_id(&id).await?.ok_or(AppError::NotFound)?;
 
     Ok(Json(UserResponse::from(user)))
 }
@@ -100,8 +97,7 @@ pub async fn update_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.update(id, &req).await?
-        .ok_or(AppError::NotFound)?;
+    let user = repo.update(id, &req).await?.ok_or(AppError::NotFound)?;
 
     Ok(Json(json!({
         "message": "用户更新成功",
@@ -141,7 +137,9 @@ pub async fn change_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.find_by_id(&auth_context.user_id).await?
+    let user = repo
+        .find_by_id(&auth_context.user_id)
+        .await?
         .ok_or(AppError::NotFound)?;
 
     let hasher = PasswordHasher::new();
@@ -154,7 +152,8 @@ pub async fn change_password(
     let new_password_hash = hasher.hash(&req.new_password)?;
 
     // 更新密码
-    repo.update_password(auth_context.user_id, &new_password_hash, false).await?;
+    repo.update_password(auth_context.user_id, &new_password_hash, false)
+        .await?;
 
     Ok(Json(json!({
         "message": "密码修改成功"

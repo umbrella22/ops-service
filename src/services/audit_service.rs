@@ -1,10 +1,6 @@
 //! 审计日志服务
 
-use crate::{
-    error::AppError,
-    models::audit::*,
-    repository::audit_repo::AuditRepository,
-};
+use crate::{error::AppError, models::audit::*, repository::audit_repo::AuditRepository};
 use sqlx::PgPool;
 use uuid::Uuid;
 

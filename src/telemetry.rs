@@ -7,8 +7,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 /// 初始化日志与追踪系统
 pub fn init_telemetry(config: &AppConfig) {
     // 从环境变量构建过滤器
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
 
     // 根据配置选择日志格式
     let log_layer = match config.logging.format.to_lowercase().as_str() {
@@ -17,9 +17,7 @@ pub fn init_telemetry(config: &AppConfig) {
             tracing_subscriber::fmt::layer()
                 .json()
                 .with_target(false)
-                .with_span_events(
-                    tracing_subscriber::fmt::format::FmtSpan::CLOSE,
-                )
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
                 .boxed()
         }
         "pretty" => {
@@ -31,9 +29,7 @@ pub fn init_telemetry(config: &AppConfig) {
         }
         _ => {
             // 默认格式
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .boxed()
+            tracing_subscriber::fmt::layer().with_target(false).boxed()
         }
     };
 

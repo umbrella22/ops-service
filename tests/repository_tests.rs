@@ -1,11 +1,11 @@
 //! 仓库层单元测试
 
-use ops_system::repository::{UserRepository, RoleRepository, AssetRepository, AuditRepository};
-use ops_system::models::{user::*, role::*, asset::*, audit::*};
+use ops_system::models::{asset::*, audit::*, role::*, user::*};
+use ops_system::repository::{AssetRepository, AuditRepository, RoleRepository, UserRepository};
 use uuid::Uuid;
 
 mod common;
-use common::{create_test_config, create_test_user, create_test_role};
+use common::{create_test_config, create_test_role, create_test_user};
 
 #[tokio::test]
 async fn test_user_repository_create_and_find() {
@@ -138,10 +138,7 @@ async fn test_asset_repository_create_group() {
         description: Some("Production servers".to_string()),
     };
 
-    let group = asset_repo
-        .create_group(&req, Uuid::new_v4())
-        .await
-        .unwrap();
+    let group = asset_repo.create_group(&req, Uuid::new_v4()).await.unwrap();
 
     assert_eq!(group.name, "production");
     assert_eq!(group.environment, "production");
@@ -241,10 +238,7 @@ async fn test_asset_repository_list_hosts() {
         search: None,
     };
 
-    let hosts = asset_repo
-        .list_hosts(&filters, 10, 0)
-        .await
-        .unwrap();
+    let hosts = asset_repo.list_hosts(&filters, 10, 0).await.unwrap();
 
     assert_eq!(hosts.len(), 3);
 
@@ -294,10 +288,7 @@ async fn test_audit_repository_log_and_retrieve() {
         offset: Some(0),
     };
 
-    let logs = audit_repo
-        .list_audit_logs(&filters, 10, 0)
-        .await
-        .unwrap();
+    let logs = audit_repo.list_audit_logs(&filters, 10, 0).await.unwrap();
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].action, "create");

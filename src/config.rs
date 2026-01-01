@@ -2,7 +2,7 @@
 //! 从环境变量加载所有配置，使用 Secret 包装敏感信息
 
 use config::{Config, ConfigError, Environment};
-use secrecy::{Secret, ExposeSecret};
+use secrecy::{ExposeSecret, Secret};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,9 +123,7 @@ impl AppConfig {
         if let Some(port_str) = self.server.addr.split(':').last() {
             if let Ok(port) = port_str.parse::<u16>() {
                 if port < 1024 {
-                    return Err(ConfigError::Message(
-                        "Server port should be >= 1024".to_string(),
-                    ));
+                    return Err(ConfigError::Message("Server port should be >= 1024".to_string()));
                 }
             }
         }
@@ -169,13 +167,17 @@ impl AppConfig {
         // 验证令牌过期时间
         if self.security.access_token_exp_secs < 60 || self.security.access_token_exp_secs > 86400 {
             return Err(ConfigError::Message(
-                "access_token_exp_secs must be between 60 and 86400 (1 minute to 24 hours)".to_string(),
+                "access_token_exp_secs must be between 60 and 86400 (1 minute to 24 hours)"
+                    .to_string(),
             ));
         }
 
-        if self.security.refresh_token_exp_secs < 3600 || self.security.refresh_token_exp_secs > 2592000 {
+        if self.security.refresh_token_exp_secs < 3600
+            || self.security.refresh_token_exp_secs > 2592000
+        {
             return Err(ConfigError::Message(
-                "refresh_token_exp_secs must be between 3600 and 2592000 (1 hour to 30 days)".to_string(),
+                "refresh_token_exp_secs must be between 3600 and 2592000 (1 hour to 30 days)"
+                    .to_string(),
             ));
         }
 

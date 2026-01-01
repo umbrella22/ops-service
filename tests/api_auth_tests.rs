@@ -9,7 +9,7 @@ use serde_json::json;
 use tower::ServiceExt;
 
 mod common;
-use common::{create_test_app_state, setup_test_db, create_test_user};
+use common::{create_test_app_state, create_test_user, setup_test_db};
 
 #[tokio::test]
 async fn test_login_success() {
@@ -150,7 +150,12 @@ async fn test_get_current_user() {
         .await
         .unwrap();
 
-    let login_body_bytes = login_response.into_body().collect().await.unwrap().to_bytes();
+    let login_body_bytes = login_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let login_json: serde_json::Value = serde_json::from_slice(&login_body_bytes).unwrap();
     let access_token = login_json["access_token"].as_str().unwrap();
 
@@ -231,7 +236,12 @@ async fn test_logout() {
         .await
         .unwrap();
 
-    let login_body_bytes = login_response.into_body().collect().await.unwrap().to_bytes();
+    let login_body_bytes = login_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let login_json: serde_json::Value = serde_json::from_slice(&login_body_bytes).unwrap();
     let refresh_token = login_json["refresh_token"].as_str().unwrap();
 

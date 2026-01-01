@@ -5,7 +5,7 @@ use crate::{
     auth::password::PasswordHasher,
     config::AppConfig,
     error::AppError,
-    models::{auth::*, user::*, audit::*},
+    models::{audit::*, auth::*, user::*},
     repository::{auth_repo::AuthRepository, user_repo::UserRepository},
 };
 use sqlx::PgPool;
@@ -163,15 +163,14 @@ impl AuthService {
         let (roles, scopes) = self.get_user_roles_and_scopes(user.id).await?;
 
         // 生成新的令牌对
-        let new_token_pair = self.jwt_service.generate_token_pair(
-            &user.id,
-            &user.username,
-            roles,
-            scopes,
-        )?;
+        let new_token_pair =
+            self.jwt_service
+                .generate_token_pair(&user.id, &user.username, roles, scopes)?;
 
         // 撤销旧的刷新令牌
-        let _ = auth_repo.revoke_refresh_token(refresh_token_record.id).await;
+        let _ = auth_repo
+            .revoke_refresh_token(refresh_token_record.id)
+            .await;
 
         // 存储新的刷新令牌
         let new_token_hash = AuthRepository::hash_token(&new_token_pair.refresh_token);
@@ -249,7 +248,8 @@ impl AuthService {
         user_id: Uuid,
     ) -> Result<(Vec<String>, Vec<String>), AppError> {
         let user_repo = UserRepository::new(self.db.clone());
-        let role_bindings: Vec<crate::models::role::RoleBinding> = user_repo.get_user_roles(user_id).await?;
+        let role_bindings: Vec<crate::models::role::RoleBinding> =
+            user_repo.get_user_roles(user_id).await?;
 
         let roles: Vec<String> = role_bindings.iter().map(|r| r.role_name.clone()).collect();
 

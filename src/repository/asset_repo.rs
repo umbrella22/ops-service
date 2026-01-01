@@ -26,7 +26,7 @@ impl AssetRepository {
             INSERT INTO assets_groups (name, description, environment, parent_id, created_by)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&req.name)
         .bind(&req.description)
@@ -41,12 +41,10 @@ impl AssetRepository {
 
     /// 获取资产组
     pub async fn get_group(&self, id: Uuid) -> Result<Option<AssetGroup>, AppError> {
-        let group = sqlx::query_as::<_, AssetGroup>(
-            "SELECT * FROM assets_groups WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let group = sqlx::query_as::<_, AssetGroup>("SELECT * FROM assets_groups WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(group)
     }
@@ -58,14 +56,14 @@ impl AssetRepository {
     ) -> Result<Vec<AssetGroup>, AppError> {
         let groups = if let Some(env) = environment {
             sqlx::query_as::<_, AssetGroup>(
-                "SELECT * FROM assets_groups WHERE environment = $1 ORDER BY name"
+                "SELECT * FROM assets_groups WHERE environment = $1 ORDER BY name",
             )
             .bind(env)
             .fetch_all(&self.db)
             .await?
         } else {
             sqlx::query_as::<_, AssetGroup>(
-                "SELECT * FROM assets_groups ORDER BY environment, name"
+                "SELECT * FROM assets_groups ORDER BY environment, name",
             )
             .fetch_all(&self.db)
             .await?
@@ -91,7 +89,7 @@ impl AssetRepository {
                 updated_at = NOW()
             WHERE id = $1
             RETURNING *
-            "#
+            "#,
         )
         .bind(id)
         .bind(&req.name)
@@ -153,24 +151,20 @@ impl AssetRepository {
 
     /// 获取主机
     pub async fn get_host(&self, id: Uuid) -> Result<Option<Host>, AppError> {
-        let host = sqlx::query_as::<_, Host>(
-            "SELECT * FROM assets_hosts WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let host = sqlx::query_as::<_, Host>("SELECT * FROM assets_hosts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(host)
     }
 
     /// 根据标识符获取主机
     pub async fn get_host_by_identifier(&self, identifier: &str) -> Result<Option<Host>, AppError> {
-        let host = sqlx::query_as::<_, Host>(
-            "SELECT * FROM assets_hosts WHERE identifier = $1"
-        )
-        .bind(identifier)
-        .fetch_optional(&self.db)
-        .await?;
+        let host = sqlx::query_as::<_, Host>("SELECT * FROM assets_hosts WHERE identifier = $1")
+            .bind(identifier)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(host)
     }
@@ -199,7 +193,10 @@ impl AssetRepository {
         }
         if let Some(_search) = &filters.search {
             index += 1;
-            query.push_str(&format!(" AND (identifier ILIKE ${} OR display_name ILIKE ${})", index, index));
+            query.push_str(&format!(
+                " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
+                index, index
+            ));
         }
         if let Some(_tags) = &filters.tags {
             index += 1;
@@ -233,9 +230,7 @@ impl AssetRepository {
             .fetch_all(&self.db)
             .await?
             .iter()
-            .map(|row: &sqlx::postgres::PgRow| {
-                sqlx::FromRow::from_row(row).unwrap()
-            })
+            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
             .collect();
 
         Ok(hosts)
@@ -252,9 +247,7 @@ impl AssetRepository {
         let current: Host = self.get_host(id).await?.ok_or(AppError::NotFound)?;
 
         if current.version != req.version {
-            return Err(AppError::BadRequest(
-                "资源已被其他用户修改".to_string()
-            ));
+            return Err(AppError::BadRequest("资源已被其他用户修改".to_string()));
         }
 
         let host = sqlx::query_as::<_, Host>(
@@ -276,7 +269,7 @@ impl AssetRepository {
                 updated_at = NOW()
             WHERE id = $1
             RETURNING *
-            "#
+            "#,
         )
         .bind(id)
         .bind(&req.display_name)
@@ -326,7 +319,10 @@ impl AssetRepository {
         }
         if let Some(_search) = &filters.search {
             index += 1;
-            query.push_str(&format!(" AND (identifier ILIKE ${} OR display_name ILIKE ${})", index, index));
+            query.push_str(&format!(
+                " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
+                index, index
+            ));
         }
         if let Some(_tags) = &filters.tags {
             index += 1;

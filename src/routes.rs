@@ -11,14 +11,14 @@ use crate::{
     auth::JwtService,
     handlers,
     middleware::AppState,
-    services::{AuthService, PermissionService, AuditService},
+    services::{AuditService, AuthService, PermissionService},
 };
 
 /// 创建应用路由
 pub fn create_router(state: Arc<AppState>) -> Router {
     // 创建所有服务
-    let jwt_service = Arc::new(JwtService::from_config(&state.config)
-        .expect("Failed to create JWT service"));
+    let jwt_service =
+        Arc::new(JwtService::from_config(&state.config).expect("Failed to create JWT service"));
 
     let auth_service = Arc::new(AuthService::new(
         state.db.clone(),
@@ -104,8 +104,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/audit/login-events", get(handlers::audit::list_login_events));
 
     // 指标端点
-    let metrics_routes = Router::new()
-        .route("/metrics", get(handlers::metrics::metrics_export));
+    let metrics_routes = Router::new().route("/metrics", get(handlers::metrics::metrics_export));
 
     // 组合所有路由
     Router::new()
@@ -121,8 +120,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             state.clone(),
             crate::middleware::rate_limit_middleware,
         ))
-        .layer(axum::middleware::from_fn(
-            crate::middleware::request_tracking_middleware,
-        ))
+        .layer(axum::middleware::from_fn(crate::middleware::request_tracking_middleware))
         .with_state(state)
 }

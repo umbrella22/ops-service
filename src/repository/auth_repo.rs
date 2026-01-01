@@ -24,7 +24,7 @@ impl AuthRepository {
                 id, token_hash, user_id, device_id, user_agent, ip_address, expires_at, created_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#
+            "#,
         )
         .bind(token.id)
         .bind(&token.token_hash)
@@ -41,13 +41,15 @@ impl AuthRepository {
     }
 
     /// 根据哈希查找刷新令牌
-    pub async fn find_refresh_token_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>, AppError> {
-        let token = sqlx::query_as::<_, RefreshToken>(
-            "SELECT * FROM refresh_tokens WHERE token_hash = $1"
-        )
-        .bind(token_hash)
-        .fetch_optional(&self.db)
-        .await?;
+    pub async fn find_refresh_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<RefreshToken>, AppError> {
+        let token =
+            sqlx::query_as::<_, RefreshToken>("SELECT * FROM refresh_tokens WHERE token_hash = $1")
+                .bind(token_hash)
+                .fetch_optional(&self.db)
+                .await?;
 
         Ok(token)
     }
@@ -55,7 +57,7 @@ impl AuthRepository {
     /// 撤销刷新令牌
     pub async fn revoke_refresh_token(&self, token_id: Uuid) -> Result<bool, AppError> {
         let result = sqlx::query(
-            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL"
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
         )
         .bind(token_id)
         .execute(&self.db)
@@ -65,7 +67,11 @@ impl AuthRepository {
     }
 
     /// 根据哈希撤销刷新令牌
-    pub async fn revoke_refresh_token_by_hash(&self, token_hash: &str, user_id: Uuid) -> Result<bool, AppError> {
+    pub async fn revoke_refresh_token_by_hash(
+        &self,
+        token_hash: &str,
+        user_id: Uuid,
+    ) -> Result<bool, AppError> {
         let result = sqlx::query(
             "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND user_id = $2 AND revoked_at IS NULL"
         )
@@ -91,11 +97,9 @@ impl AuthRepository {
 
     /// 清理过期的刷新令牌
     pub async fn cleanup_expired_tokens(&self) -> Result<u64, AppError> {
-        let result = sqlx::query(
-            "DELETE FROM refresh_tokens WHERE expires_at < NOW()"
-        )
-        .execute(&self.db)
-        .await?;
+        let result = sqlx::query("DELETE FROM refresh_tokens WHERE expires_at < NOW()")
+            .execute(&self.db)
+            .await?;
 
         Ok(result.rows_affected())
     }
@@ -111,7 +115,7 @@ impl AuthRepository {
                 source_ip, user_agent, device_id, risk_tag, occurred_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            "#
+            "#,
         )
         .bind(event.id)
         .bind(event.user_id)
@@ -131,7 +135,11 @@ impl AuthRepository {
     }
 
     /// 统计最近的登录失败次数
-    pub async fn count_recent_login_failures(&self, client_ip: &str, seconds: i64) -> Result<i64, AppError> {
+    pub async fn count_recent_login_failures(
+        &self,
+        client_ip: &str,
+        seconds: i64,
+    ) -> Result<i64, AppError> {
         let count: i64 = sqlx::query(
             r#"
             SELECT COUNT(*)
@@ -139,7 +147,7 @@ impl AuthRepository {
             WHERE source_ip = $1
                 AND event_type = 'login_failure'
                 AND occurred_at > NOW() - INTERVAL '1 second' * $2
-            "#
+            "#,
         )
         .bind(client_ip)
         .bind(seconds)
@@ -151,7 +159,11 @@ impl AuthRepository {
     }
 
     /// 统计用户最近的成功登录次数
-    pub async fn count_recent_user_logins(&self, user_id: Uuid, hours: i64) -> Result<i64, AppError> {
+    pub async fn count_recent_user_logins(
+        &self,
+        user_id: Uuid,
+        hours: i64,
+    ) -> Result<i64, AppError> {
         let count: i64 = sqlx::query(
             r#"
             SELECT COUNT(*)
@@ -159,7 +171,7 @@ impl AuthRepository {
             WHERE user_id = $1
                 AND event_type = 'login_success'
                 AND occurred_at > NOW() - INTERVAL '1 hour' * $2
-            "#
+            "#,
         )
         .bind(user_id)
         .bind(hours)

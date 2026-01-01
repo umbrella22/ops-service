@@ -78,8 +78,12 @@ pub struct CreateHostRequest {
     pub os_version: Option<String>,
 }
 
-fn default_port() -> i32 { 22 }
-fn default_status() -> String { "active".to_string() }
+fn default_port() -> i32 {
+    22
+}
+fn default_status() -> String {
+    "active".to_string()
+}
 
 /// Update host request
 #[derive(Debug, Deserialize)]

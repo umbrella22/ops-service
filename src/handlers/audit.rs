@@ -1,19 +1,17 @@
 //! 审计日志的 HTTP 处理器
 
 use crate::{
-    auth::middleware::AuthContext,
-    error::AppError,
-    middleware::AppState,
-    models::audit::*,
+    auth::middleware::AuthContext, error::AppError, middleware::AppState, models::audit::*,
 };
-use std::sync::Arc;
 use axum::{
     extract::{Query, State},
-    Json, response::IntoResponse,
+    response::IntoResponse,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 pub struct AuditLogQuery {
@@ -31,7 +29,9 @@ pub struct AuditLogQuery {
     pub offset: i64,
 }
 
-fn default_limit() -> i64 { 50 }
+fn default_limit() -> i64 {
+    50
+}
 
 #[derive(Debug, Deserialize)]
 pub struct LoginEventQuery {
@@ -66,7 +66,10 @@ pub async fn list_audit_logs(
         trace_id: query.trace_id,
     };
 
-    let logs = state.audit_service.query_logs(&filters, query.limit, query.offset).await?;
+    let logs = state
+        .audit_service
+        .query_logs(&filters, query.limit, query.offset)
+        .await?;
     let count = state.audit_service.count_logs(&filters).await?;
 
     Ok(Json(json!({

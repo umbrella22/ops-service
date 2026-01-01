@@ -72,9 +72,7 @@ pub async fn health_check() -> Json<HealthResponse> {
 
 /// 就绪探针
 /// 检查数据库等依赖
-pub async fn readiness_check(
-    State(state): State<Arc<AppState>>,
-) -> Json<ReadinessResponse> {
+pub async fn readiness_check(State(state): State<Arc<AppState>>) -> Json<ReadinessResponse> {
     let mut checks = Vec::new();
 
     // 数据库检查

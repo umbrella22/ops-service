@@ -3,9 +3,9 @@
 
 use crate::{config::AppConfig, error::AppError};
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
-use serde::{Deserialize, Serialize};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use secrecy::ExposeSecret;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// JWT claims for access tokens
@@ -59,9 +59,7 @@ impl JwtService {
 
         // Ensure secret is at least 32 bytes for HS256
         if secret.len() < 32 {
-            return Err(AppError::Config(
-                "JWT secret too short (min 32 chars)".to_string()
-            ));
+            return Err(AppError::Config("JWT secret too short (min 32 chars)".to_string()));
         }
 
         let encoding_key = EncodingKey::from_secret(secret.as_bytes());
@@ -97,11 +95,10 @@ impl JwtService {
             jti: Uuid::new_v4().to_string(),
         };
 
-        encode(&Header::default(), &claims, &self.encoding_key)
-            .map_err(|e| {
-                tracing::error!("Failed to encode access token: {:?}", e);
-                AppError::Internal
-            })
+        encode(&Header::default(), &claims, &self.encoding_key).map_err(|e| {
+            tracing::error!("Failed to encode access token: {:?}", e);
+            AppError::Internal
+        })
     }
 
     /// Generate refresh token
@@ -124,11 +121,10 @@ impl JwtService {
             jti: Uuid::new_v4().to_string(),
         };
 
-        encode(&Header::default(), &claims, &self.encoding_key)
-            .map_err(|e| {
-                tracing::error!("Failed to encode refresh token: {:?}", e);
-                AppError::Internal
-            })
+        encode(&Header::default(), &claims, &self.encoding_key).map_err(|e| {
+            tracing::error!("Failed to encode refresh token: {:?}", e);
+            AppError::Internal
+        })
     }
 
     /// Generate token pair
@@ -139,12 +135,7 @@ impl JwtService {
         roles: Vec<String>,
         scopes: Vec<String>,
     ) -> Result<TokenPair, AppError> {
-        let access_token = self.generate_access_token(
-            user_id,
-            username,
-            roles,
-            scopes,
-        )?;
+        let access_token = self.generate_access_token(user_id, username, roles, scopes)?;
 
         let refresh_token = self.generate_refresh_token(user_id, username)?;
 
@@ -157,16 +148,12 @@ impl JwtService {
 
     /// Validate and decode token
     pub fn validate_token(&self, token: &str) -> Result<Claims, AppError> {
-        Ok(decode::<Claims>(
-            token,
-            &self.decoding_key,
-            &Validation::new(Algorithm::HS256)
-        )
-        .map_err(|e| {
-            tracing::debug!("Token validation failed: {:?}", e);
-            AppError::Unauthorized
-        })?
-        .claims)
+        Ok(decode::<Claims>(token, &self.decoding_key, &Validation::new(Algorithm::HS256))
+            .map_err(|e| {
+                tracing::debug!("Token validation failed: {:?}", e);
+                AppError::Unauthorized
+            })?
+            .claims)
     }
 
     /// Validate access token specifically

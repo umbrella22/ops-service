@@ -1,18 +1,16 @@
 //! 资产管理的 HTTP 处理器
 
 use crate::{
-    auth::middleware::AuthContext,
-    error::AppError,
-    middleware::AppState,
-    models::asset::*,
+    auth::middleware::AuthContext, error::AppError, middleware::AppState, models::asset::*,
 };
-use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
-    Json, response::IntoResponse,
+    response::IntoResponse,
+    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -25,7 +23,9 @@ pub struct ListQuery {
     pub offset: i64,
 }
 
-fn default_limit() -> i64 { 50 }
+fn default_limit() -> i64 {
+    50
+}
 
 // ==================== Asset Groups ====================
 
@@ -36,7 +36,9 @@ pub async fn list_groups(
     Query(query): Query<ListQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "read", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "read", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
@@ -55,7 +57,9 @@ pub async fn create_group(
     Json(req): Json<CreateGroupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
@@ -74,12 +78,13 @@ pub async fn get_group(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "read", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "read", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let group = repo.get_group(id).await?
-        .ok_or(AppError::NotFound)?;
+    let group = repo.get_group(id).await?.ok_or(AppError::NotFound)?;
 
     Ok(Json(group))
 }
@@ -92,11 +97,15 @@ pub async fn update_group(
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let group = repo.update_group(id, &req).await?
+    let group = repo
+        .update_group(id, &req)
+        .await?
         .ok_or(AppError::NotFound)?;
 
     Ok(Json(json!({
@@ -112,7 +121,9 @@ pub async fn delete_group(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
@@ -145,7 +156,9 @@ pub async fn list_hosts(
     Query(query): Query<HostListQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "read", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "read", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
@@ -175,7 +188,9 @@ pub async fn create_host(
     Json(req): Json<CreateHostRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
@@ -194,12 +209,13 @@ pub async fn get_host(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "read", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "read", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let host = repo.get_host(id).await?
-        .ok_or(AppError::NotFound)?;
+    let host = repo.get_host(id).await?.ok_or(AppError::NotFound)?;
 
     Ok(Json(host))
 }
@@ -212,11 +228,15 @@ pub async fn update_host(
     Json(req): Json<UpdateHostRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let host = repo.update_host(id, &req, auth_context.user_id).await?
+    let host = repo
+        .update_host(id, &req, auth_context.user_id)
+        .await?
         .ok_or(AppError::NotFound)?;
 
     Ok(Json(json!({
@@ -232,7 +252,9 @@ pub async fn delete_host(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
     // 检查权限
-    state.permission_service.require_permission(auth_context.user_id, "asset", "write", None, None)
+    state
+        .permission_service
+        .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
