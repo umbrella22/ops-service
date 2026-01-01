@@ -65,18 +65,38 @@ fi
 # Create .env file
 if [ ! -f "$CONFIG_DIR/docker/.env" ]; then
     log_info "Creating environment configuration..."
-    cat > "$CONFIG_DIR/docker/.env" <<'EOF'
+
+    # Generate random password
+    if command -v openssl &> /dev/null; then
+        POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    else
+        # Fallback if openssl is not available
+        POSTGRES_PASSWORD="ops_$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 20)"
+    fi
+
+    cat > "$CONFIG_DIR/docker/.env" <<EOF
 # PostgreSQL Configuration
 POSTGRES_DB=ops_system
 POSTGRES_USER=ops_user
-POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
 # Application Configuration
 LOG_LEVEL=info
 ALLOWED_IPS=
+
+# Seed Data Configuration
+# Seed data includes demo users and sample assets
+SEED=true
 EOF
     chmod 640 "$CONFIG_DIR/docker/.env"
     log_success "Environment configuration created"
+else
+    log_info "Environment configuration already exists, updating..."
+    # Ensure SEED variable exists
+    if ! grep -q "^SEED=" "$CONFIG_DIR/docker/.env"; then
+        echo "SEED=true" >> "$CONFIG_DIR/docker/.env"
+    fi
+    log_success "Environment configuration updated"
 fi
 
 # Create management scripts
@@ -123,6 +143,16 @@ log_success "========================================="
 log_success "Installation completed successfully!"
 log_success "========================================="
 echo ""
+
+# Check if seed data is enabled
+if [ -f "$CONFIG_DIR/docker/.env" ] && grep -q "^SEED=true" "$CONFIG_DIR/docker/.env"; then
+    echo "Configuration:"
+    echo "  Seed data: ✓ Enabled"
+    echo "    - Demo accounts will be created on first start"
+    echo "    - Sample assets will be loaded"
+    echo ""
+fi
+
 echo "Configuration directory: $CONFIG_DIR/docker"
 echo ""
 echo "Quick start commands:"
@@ -137,6 +167,16 @@ echo "  - PostgreSQL database (port 5432, localhost only)"
 echo "  - API service (internal, accessible via Nginx)"
 echo "  - Nginx reverse proxy (ports 80, 443)"
 echo ""
+
+if [ -f "$CONFIG_DIR/docker/.env" ] && grep -q "^SEED=true" "$CONFIG_DIR/docker/.env"; then
+    echo "Default accounts after first start:"
+    echo "  - admin / Admin123! (Administrator)"
+    echo "  - demo  / Demo123!  (Operator)"
+    echo ""
+    log_warn "Remember to change default passwords!"
+    echo ""
+fi
+
 echo "Access the application:"
 echo "  HTTP:  http://localhost"
 echo "  HTTPS: https://localhost"
