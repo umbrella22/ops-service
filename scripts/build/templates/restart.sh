@@ -12,8 +12,10 @@ NC='\033[0m'
 
 SERVICE_NAME="{{BINARY_NAME}}"
 BINARY_NAME="{{BINARY_NAME}}"
-CONFIG_DIR="/etc/${BINARY_NAME}"
-DOCKER_DIR="$CONFIG_DIR/docker"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"
+DOCKER_DIR="$PACKAGE_DIR/docker"
+MARKER_FILE="$PACKAGE_DIR/.docker-mode"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
@@ -25,14 +27,25 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Detect installation mode
-if [ -d "$DOCKER_DIR" ]; then
+INSTALL_MODE="native"
+if [ -f "$MARKER_FILE" ]; then
+    INSTALL_MODE="docker"
+fi
+
+if [ "$INSTALL_MODE" = "docker" ]; then
     # Docker mode
     log_info "Restarting ${SERVICE_NAME} Docker containers..."
+
+    if [ ! -d "$DOCKER_DIR" ]; then
+        log_error "Docker directory not found: $DOCKER_DIR"
+        log_error "Please run install.sh first"
+        exit 1
+    fi
 
     cd "$DOCKER_DIR" || exit 1
 
     # Check which docker-compose command is available
-    if docker compose version &>/dev/null; then
+    if docker compose version &>/dev/null 2>&1; then
         docker compose restart
     else
         docker-compose restart
@@ -59,4 +72,3 @@ else
         exit 1
     fi
 fi
-

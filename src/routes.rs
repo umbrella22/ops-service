@@ -66,7 +66,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .post(handlers::user::create_user)
         )
         .route(
-            "/api/v1/users/:id",
+            "/api/v1/users/{id}",
             get(handlers::user::get_user)
                 .put(handlers::user::update_user)
                 .delete(handlers::user::delete_user)
@@ -80,7 +80,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .post(handlers::asset::create_group)
         )
         .route(
-            "/api/v1/groups/:id",
+            "/api/v1/groups/{id}",
             get(handlers::asset::get_group)
                 .put(handlers::asset::update_group)
                 .delete(handlers::asset::delete_group)
@@ -93,7 +93,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .post(handlers::asset::create_host)
         )
         .route(
-            "/api/v1/hosts/:id",
+            "/api/v1/hosts/{id}",
             get(handlers::asset::get_host)
                 .put(handlers::asset::update_host)
                 .delete(handlers::asset::delete_host)

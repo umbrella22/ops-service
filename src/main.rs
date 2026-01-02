@@ -10,6 +10,38 @@ use tokio::signal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // ===== CLI 参数处理 =====
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--version" => {
+                println!("ops-system {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" => {
+                print_help();
+                return Ok(());
+            }
+            _ => {
+                eprintln!("未知参数: {}", args[1]);
+                print_help();
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // 加载 .env 文件（开发环境）
+    // 按优先级加载：.env.local > .env.development > .env
+    // 生产环境应该直接设置环境变量，不依赖 .env 文件
+    if let Ok(path) = std::env::var("OPS_ENV") {
+        dotenv::from_filename(format!(".env.{}", path)).ok();
+    } else {
+        dotenv::from_filename(".env.local").ok();
+        dotenv::from_filename(".env.development").ok();
+        dotenv::dotenv().ok();
+    }
+
     // 设置应用启动时间
     health::set_start_time();
 
@@ -102,4 +134,19 @@ async fn shutdown_signal(timeout_secs: u64) {
     // 超时后强制关闭
     tokio::time::sleep(tokio::time::Duration::from_secs(timeout_secs)).await;
     tracing::warn!("Graceful shutdown timeout reached, forcing exit");
+}
+
+/// 打印帮助信息
+fn print_help() {
+    println!("ops-system {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("用法: ops-system [选项]");
+    println!();
+    println!("选项:");
+    println!("  --version     打印版本信息并退出");
+    println!("  --help        打印此帮助信息并退出");
+    println!();
+    println!("环境变量:");
+    println!("  所有配置通过环境变量完成");
+    println!("  可用选项请参考 .env.example");
 }

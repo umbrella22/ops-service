@@ -428,6 +428,7 @@ BEGIN
         subject_id, subject_type, subject_name,
         action, resource_type, resource_id, resource_name,
         changes, changes_summary,
+        result,
         occurred_at
     ) VALUES (
         COALESCE(current_user_id, NEW.created_by, NEW.updated_by, OLD.created_by, '00000000-0000-0000-0000-000000000000'::UUID),
@@ -439,6 +440,7 @@ BEGIN
         COALESCE(NEW.identifier, OLD.identifier),
         changes_data,
         changes_summary_text,
+        'success',
         NOW()
     );
 

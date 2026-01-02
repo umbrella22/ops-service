@@ -2,14 +2,16 @@
 
 ## Table of Contents
 - [System Requirements](#system-requirements)
+- [Installation Modes](#installation-modes)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Database Setup](#database-setup)
-- [Starting the Service](#starting-the-service)
+- [Service Management](#service-management)
 - [Verification](#verification)
 - [Docker Deployment](#docker-deployment)
 - [Troubleshooting](#troubleshooting)
+- [Upgrade](#upgrade)
+- [Uninstallation](#uninstallation)
 
 ## System Requirements
 
@@ -20,106 +22,192 @@
 - **CPU**: 1 core minimum
 
 ### Software Dependencies
+
+#### Native Mode
 - PostgreSQL 12+
 - systemd (for service management)
 
+#### Docker Mode (Recommended)
+- Docker 20.10+
+- Docker Compose 2.0+
+
 ### Optional Dependencies
 - Nginx (for reverse proxy)
-- Docker (for containerized deployment)
+- curl (for health checks)
+
+## Installation Modes
+
+{{BINARY_NAME}} supports two installation modes:
+
+### 1. Docker Mode (Recommended)
+
+**Advantages:**
+- ✅ All services run in isolated containers
+- ✅ Easier to manage and upgrade
+- ✅ No manual PostgreSQL setup required
+- ✅ One-command start and stop
+
+**Disadvantages:**
+- Requires Docker and Docker Compose
+- Slightly higher resource usage
+
+**Best for:**
+- Production deployments
+- Quick testing and development
+- Users who don't want to manage databases manually
+
+### 2. Native Mode
+
+**Advantages:**
+- Runs as a systemd service
+- Lower resource footprint
+- Can use system's PostgreSQL
+
+**Disadvantages:**
+- Requires manual PostgreSQL installation and configuration
+- More complex setup
+
+**Best for:**
+- Environments with existing PostgreSQL servers
+- Need for deep system integration
+- Resource-constrained environments
 
 ## Quick Start
+
+### Using One-Click Init Script (Recommended)
 
 ```bash
 # 1. Extract the archive
 tar -xzf {{BINARY_NAME}}-{{VERSION}}-linux-{{PLATFORM}}.tar.gz
 cd linux-{{PLATFORM}}
 
-# 2. Run the installer
-sudo ./scripts/install.sh
+# 2. Run the one-click initialization script
+sudo ./init.sh
+```
 
-# 3. Configure the database
-sudo nano /etc/{{BINARY_NAME}}/env
+The init script will:
+1. Detect if Docker is installed on your system
+2. Ask you to choose installation mode (if Docker is detected)
+3. Ask whether to load seed data (demo users and sample data)
+4. Automatically complete installation and start the service
 
-# 4. Start the service
-sudo systemctl start {{BINARY_NAME}}
+### Manual Installation
 
-# 5. Check status
-sudo systemctl status {{BINARY_NAME}}
+If you need more control, you can run the install script manually:
+
+```bash
+# Docker mode installation
+sudo ./scripts/install.sh --docker --seed-data
+
+# Native mode installation
+sudo ./scripts/install.sh --native --seed-data
+
+# Without seed data
+sudo ./scripts/install.sh --docker --no-seed-data
 ```
 
 ## Installation
 
-### Method 1: Automated Installation (Recommended)
-
-The included installer script will:
-- Create a dedicated system user
-- Install the binary to `/usr/local/bin`
-- Set up required directories
-- Install systemd service
-- Create default configuration
+### Docker Mode Installation
 
 ```bash
+# 1. Extract and enter directory
+tar -xzf {{BINARY_NAME}}-{{VERSION}}-linux-{{PLATFORM}}.tar.gz
 cd linux-{{PLATFORM}}
-sudo ./scripts/install.sh
+
+# 2. Run install script
+sudo ./scripts/install.sh --docker
+
+# 3. Review generated configuration
+cat /etc/{{BINARY_NAME}}/docker/.env
+
+# 4. Start services
+cd /etc/{{BINARY_NAME}}/docker
+docker-compose up -d
+
+# 5. View logs
+docker-compose logs -f
 ```
 
-### Method 2: Manual Installation
+### Native Mode Installation
 
 ```bash
-# 1. Create user
-sudo useradd -r -s /bin/false -d /var/lib/{{BINARY_NAME}} {{BINARY_NAME}}
+# 1. Install PostgreSQL
+sudo apt install postgresql postgresql-contrib  # Ubuntu/Debian
+# or
+sudo yum install postgresql-server postgresql  # RHEL/CentOS
 
-# 2. Create directories
-sudo mkdir -p /usr/local/bin
-sudo mkdir -p /etc/{{BINARY_NAME}}
-sudo mkdir -p /var/lib/{{BINARY_NAME}}/migrations
-sudo mkdir -p /var/log/{{BINARY_NAME}}
+# 2. Start PostgreSQL
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
 
-# 3. Install binary
-sudo cp bin/{{BINARY_NAME}} /usr/local/bin/
-sudo chmod +x /usr/local/bin/{{BINARY_NAME}}
+# 3. Create database
+sudo -u postgres psql
+CREATE DATABASE ops_system;
+CREATE USER ops_user WITH ENCRYPTED PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE ops_system TO ops_user;
+\q
 
-# 4. Install migrations
-sudo cp -r migrations/* /var/lib/{{BINARY_NAME}}/migrations/
-sudo chown -R {{BINARY_NAME}}:{{BINARY_NAME}} /var/lib/{{BINARY_NAME}}
+# 4. Extract and install
+tar -xzf {{BINARY_NAME}}-{{VERSION}}-linux-{{PLATFORM}}.tar.gz
+cd linux-{{PLATFORM}}
 
-# 5. Install systemd service
-sudo cp systemd/{{BINARY_NAME}}.service /etc/systemd/system/
-sudo systemctl daemon-reload
+# 5. Run install script
+sudo ./scripts/install.sh --native
+
+# 6. Edit configuration file
+sudo nano /etc/{{BINARY_NAME}}/env
+# Set database URL: OPS_DATABASE__URL=postgresql://ops_user:your_password@127.0.0.1:5432/ops_system
+
+# 7. Start service
+sudo ./scripts/start.sh
 ```
 
 ## Configuration
 
-The main configuration file is located at `/etc/{{BINARY_NAME}}/env`.
+### Docker Mode Configuration
 
-### Required Settings
+Configuration file location: `/etc/{{BINARY_NAME}}/docker/.env`
 
 ```bash
-# Database URL (REQUIRED)
-OPS_DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+# PostgreSQL Configuration
+POSTGRES_DB=ops_system
+POSTGRES_USER=ops_user
+POSTGRES_PASSWORD=<auto-generated-random-password>
 
-# JWT Secret (REQUIRED, min 32 characters)
-OPS_SECURITY_JWT_SECRET=your-random-secret-key-min-32-chars
+# Application Configuration
+LOG_LEVEL=info
+ALLOWED_IPS=
+
+# Seed Data Configuration
+LOAD_SEED_DATA=true  # true or false
 ```
 
-### Optional Settings
+To apply configuration changes:
+```bash
+cd /etc/{{BINARY_NAME}}/docker
+docker-compose restart
+```
+
+### Native Mode Configuration
+
+Configuration file location: `/etc/{{BINARY_NAME}}/env`
 
 ```bash
-# Server
-OPS_SERVER_ADDR=0.0.0.0:3000
-OPS_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS=30
+# Database configuration (NOTE: Use double underscore __ for nested fields)
+OPS_DATABASE__URL=postgresql://user:password@127.0.0.1:5432/ops_system
+OPS_DATABASE__MAX_CONNECTIONS=10
+OPS_DATABASE__MIN_CONNECTIONS=2
 
-# Database
-OPS_DATABASE_MAX_CONNECTIONS=10
-OPS_DATABASE_MIN_CONNECTIONS=2
+# Server configuration
+OPS_SERVER__ADDR=0.0.0.0:3000
 
-# Logging
-OPS_LOGGING_LEVEL=info
-OPS_LOGGING_FORMAT=json
+# Security configuration
+OPS_SECURITY__JWT_SECRET=your-random-secret-key-min-32-chars
+OPS_SECURITY__RATE_LIMIT_RPS=100
 
-# Security
-OPS_SECURITY_RATE_LIMIT_RPS=100
-OPS_SECURITY_TRUST_PROXY=true
+# Logging configuration
+OPS_LOGGING__LEVEL=info
 ```
 
 After editing the configuration, restart the service:
@@ -127,70 +215,73 @@ After editing the configuration, restart the service:
 sudo systemctl restart {{BINARY_NAME}}
 ```
 
-## Database Setup
+## Service Management
 
-### PostgreSQL Installation
+### Using Management Scripts (Recommended)
 
-```bash
-# Ubuntu/Debian
-sudo apt install postgresql postgresql-contrib
-
-# RHEL/CentOS
-sudo yum install postgresql-server postgresql-contrib
-sudo postgresql-setup initdb
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-```
-
-### Create Database and User
+All scripts automatically detect installation mode and act accordingly:
 
 ```bash
-# Switch to postgres user
-sudo -u postgres psql
-
-# In psql:
-CREATE DATABASE ops_system;
-CREATE USER ops_user WITH ENCRYPTED PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE ops_system TO ops_user;
-\q
-```
-
-### Run Migrations
-
-```bash
-# Install sqlx-cli if not already installed
-cargo install sqlx-cli --no-default-features --features rustls,postgres
-
-# Run migrations
-export OPS_DATABASE_URL="postgresql://ops_user:your_password@localhost:5432/ops_system"
-sqlx migrate run --database-url $OPS_DATABASE_URL --source-dir /var/lib/{{BINARY_NAME}}/migrations
-```
-
-## Starting the Service
-
-### Start the service
-```bash
+# Start service
 sudo ./scripts/start.sh
-# or
-sudo systemctl start {{BINARY_NAME}}
-```
 
-### Enable at boot
-```bash
-sudo systemctl enable {{BINARY_NAME}}
-```
+# Stop service
+sudo ./scripts/stop.sh
 
-### Check status
-```bash
+# Restart service
+sudo ./scripts/restart.sh
+
+# Check status
 sudo ./scripts/status.sh
-# or
-sudo systemctl status {{BINARY_NAME}}
+
+# Backup data
+sudo ./scripts/backup.sh
+
+# Update version
+sudo ./scripts/update.sh
+
+# Uninstall
+sudo ./scripts/uninstall.sh
 ```
 
-### View logs
+### Docker Mode Specific Commands
+
 ```bash
-sudo journalctl -u {{BINARY_NAME}} -f
+# Enter docker directory
+cd /etc/{{BINARY_NAME}}/docker
+
+# View logs
+docker-compose logs -f
+
+# Check container status
+docker-compose ps
+
+# Restart specific service
+docker-compose restart api
+
+# Stop all services
+docker-compose down
+
+# Start all services
+docker-compose up -d
 ```
+
+### Native Mode Specific Commands
+
+```bash
+# Enable on boot
+sudo systemctl enable {{BINARY_NAME}}
+
+# Disable on boot
+sudo systemctl disable {{BINARY_NAME}}
+
+# View live logs
+sudo journalctl -u {{BINARY_NAME}} -f
+
+# View recent logs
+sudo journalctl -u {{BINARY_NAME}} -n 100
+```
+
 
 ## Verification
 
@@ -221,54 +312,80 @@ sudo journalctl -u {{BINARY_NAME}} -n 50
 
 ## Docker Deployment
 
-### Using Docker Compose
+### Quick Docker Deployment
 
 ```bash
-cd docker/
-docker compose up -d
+# 1. Extract archive
+tar -xzf {{BINARY_NAME}}-{{VERSION}}-linux-{{PLATFORM}}.tar.gz
+cd linux-{{PLATFORM}}
+
+# 2. Run installer
+sudo ./scripts/install.sh --docker
+
+# 3. Start services
+cd /etc/{{BINARY_NAME}}/docker
+docker-compose up -d
 ```
 
-### Manual Docker Build
+### Services Deployed
+
+When using Docker mode, the following services are deployed:
+- **PostgreSQL database** (port 5432, localhost only)
+- **API service** (internal, accessible via Nginx)
+- **Nginx reverse proxy** (ports 80, 443)
+
+All services are configured with automatic restart and health checks.
+
+### Managing Docker Services
 
 ```bash
-cd docker/
-docker build -t {{BINARY_NAME}}:{{VERSION}} .
-docker run -d \
-  --name {{BINARY_NAME}} \
-  -p 3000:3000 \
-  -e OPS_DATABASE_URL="postgresql://..." \
-  -e OPS_SECURITY_JWT_SECRET="..." \
-  {{BINARY_NAME}}:{{VERSION}}
-```
+cd /etc/{{BINARY_NAME}}/docker
 
-### With Nginx Reverse Proxy
+# View all services
+docker-compose ps
 
-The package includes Nginx configuration files. Copy them to your Nginx server:
+# View logs
+docker-compose logs -f
 
-```bash
-sudo cp nginx/nginx.conf /etc/nginx/nginx.conf
-sudo cp nginx/ssl.conf /etc/nginx/conf.d/ssl.conf
-sudo nginx -t
-sudo systemctl reload nginx
+# Restart all services
+docker-compose restart
+
+# Stop all services
+docker-compose down
+
+# Start all services
+docker-compose up -d
 ```
 
 ## Troubleshooting
 
 ### Service Won't Start
 
-1. Check logs:
+1. **Check logs:**
    ```bash
+   # Docker mode
+   cd /etc/{{BINARY_NAME}}/docker && docker-compose logs
+
+   # Native mode
    sudo journalctl -u {{BINARY_NAME}} -n 100
    ```
 
-2. Verify configuration:
+2. **Verify configuration:**
    ```bash
-   sudo cat /etc/{{BINARY_NAME}}/env
+   # Docker mode
+   cat /etc/{{BINARY_NAME}}/docker/.env
+
+   # Native mode
+   cat /etc/{{BINARY_NAME}}/env
    ```
 
-3. Check database connection:
+3. **Check database connection:**
    ```bash
-   psql "postgresql://user:pass@localhost:5432/dbname"
+   # Docker mode
+   docker exec -it <postgres_container> psql -U ops_user -d ops_system
+
+   # Native mode
+   psql "postgresql://user:pass@127.0.0.1:5432/ops_system"
    ```
 
 ### Permission Issues
@@ -287,27 +404,143 @@ sudo chmod 640 /etc/{{BINARY_NAME}}/env
    sudo systemctl status postgresql
    ```
 
-2. Check connection string in `/etc/{{BINARY_NAME}}/env`
+2. Check connection string:
+   - Native mode: `/etc/{{BINARY_NAME}}/env`
+   - Docker mode: `/etc/{{BINARY_NAME}}/docker/.env`
 
 3. Ensure database exists and user has permissions
 
 ### Port Already in Use
 
-Change the port in `/etc/{{BINARY_NAME}}/env`:
+Change the port in configuration:
 ```bash
-OPS_SERVER_ADDR=0.0.0.0:3001
+# Native mode - edit /etc/{{BINARY_NAME}}/env
+OPS_SERVER__ADDR=0.0.0.0:3001
+
+# Docker mode - edit /etc/{{BINARY_NAME}}/docker/.env
+# Then modify docker-compose.yml port mappings
 ```
 
-### Get Help
+## Upgrade
 
-- Check logs: `sudo journalctl -u {{BINARY_NAME}} -f`
-- Review troubleshooting guide: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- Check system resources: `htop` or `top`
+### Using Update Script (Recommended)
+
+```bash
+# 1. Extract new version
+tar -xzf {{BINARY_NAME}}-{{NEW_VERSION}}-linux-{{PLATFORM}}.tar.gz
+cd linux-{{PLATFORM}}
+
+# 2. Run update script (automatically backs up and updates)
+sudo ./scripts/update.sh
+
+# 3. Verify upgrade
+./scripts/status.sh
+```
+
+### Manual Upgrade
+
+```bash
+# 1. Backup current version
+sudo ./scripts/backup.sh
+
+# 2. Stop service
+sudo ./scripts/stop.sh
+
+# 3. Replace binary
+sudo cp bin/{{BINARY_NAME}} /usr/local/bin/
+sudo chmod +x /usr/local/bin/{{BINARY_NAME}}
+
+# 4. Start service
+sudo ./scripts/start.sh
+```
+
+## Uninstallation
+
+### Docker Mode Uninstallation
+
+```bash
+# Run uninstall script
+sudo ./scripts/uninstall.sh
+
+# Manually remove Docker volumes (optional)
+docker volume ls
+docker volume rm <volume_name>
+```
+
+### Native Mode Uninstallation
+
+```bash
+# Run uninstall script
+sudo ./scripts/uninstall.sh
+
+# Note: This will remove all data, including:
+# - Configuration files in /etc/{{BINARY_NAME}}
+# - Data directory /var/lib/{{BINARY_NAME}}
+# - Log files in /var/log/{{BINARY_NAME}}
+# - System user {{BINARY_NAME}}
+# - Database (needs to be dropped manually)
+```
+
+### Manually Drop Database
+
+```bash
+sudo -u postgres psql
+DROP DATABASE ops_system;
+DROP USER ops_user;
+\q
+```
+
+## Clean Installation
+
+If you need to start completely fresh:
+
+```bash
+# Clean install removes all data and reinstalls
+sudo ./scripts/clean-install.sh
+
+# Note: This operation is irreversible and will permanently delete all data!
+```
+
+## Default Accounts
+
+If you chose to load seed data during installation:
+
+| Username | Password | Role | Description |
+|----------|----------|------|-------------|
+| admin | Admin123! | Administrator | Full access |
+| demo | Demo123! | Operator | Limited access |
+
+**⚠️ Important: Change default passwords immediately after first login!**
+
+## More Resources
+
+- [Docker Deployment Guide](DOCKER.md)
+- [Security Configuration Guide](SECURITY.md)
+- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- [Upgrade Guide](UPGRADE.md)
+
+## Get Help
+
+```bash
+# Check logs
+sudo ./scripts/status.sh
+
+# Check system resources
+htop or top
+
+# View full logs
+# Docker mode
+cd /etc/{{BINARY_NAME}}/docker && docker-compose logs
+
+# Native mode
+sudo journalctl -u {{BINARY_NAME}} -f
+```
 
 ## Next Steps
 
-- Review the [upgrade guide](UPGRADE.md) for version updates
-- Configure reverse proxy with Nginx
+- Check logs to confirm service is running properly
+- Change default passwords
+- Configure reverse proxy (Nginx)
 - Set up automated backups
 - Configure monitoring and alerting
 - Review security best practices

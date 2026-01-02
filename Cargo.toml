@@ -33,6 +33,7 @@ sqlx = { version = "0.8", features = [
 config = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+dotenv = "0.15"
 
 # 日志与追踪
 tracing = "0.1"

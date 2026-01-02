@@ -17,8 +17,11 @@ services:
 
     # 环境变量
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/{{BINARY_NAME}}
-      - RUST_LOG=info
+      - OPS_DATABASE__URL=postgresql://postgres:password@db:5432/{{BINARY_NAME}}
+      - OPS_SERVER__ADDR=0.0.0.0:3000
+      - OPS_LOGGING__LEVEL=info
+      - OPS_LOGGING__FORMAT=json
+      - OPS_SECURITY__JWT_SECRET=change-this-in-production-min-32-chars
       # 限制 Runner 使用的 Docker 网络
       - DOCKER_NETWORK={{BINARY_NAME}}-network
       # Runner 工作目录前缀（防止误删其他目录）

@@ -13,6 +13,8 @@ NC='\033[0m'
 
 BINARY_NAME="{{BINARY_NAME}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"
+DOCKER_DIR="$PACKAGE_DIR/docker"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
@@ -32,11 +34,59 @@ log_info "One-Click Initialization for ${BINARY_NAME}"
 log_info "========================================="
 echo ""
 log_info "This script will:"
-log_info "  1. Install the service"
-log_info "  2. Setup the database"
-log_info "  3. Start the service"
+log_info "  1. Check system environment"
+log_info "  2. Select installation mode"
+log_info "  3. Install the service"
+log_info "  4. Setup the database/configuration"
+log_info "  5. Start the service"
 echo ""
-read -p "Continue? (Y/n): " -n 1 -r
+
+# Check if Docker is available
+DOCKER_AVAILABLE=false
+if command -v docker &> /dev/null && docker --version &> /dev/null; then
+    # Check if Docker daemon is running
+    if docker info &> /dev/null 2>&1; then
+        DOCKER_AVAILABLE=true
+    fi
+fi
+
+# Select installation mode
+INSTALL_MODE=""
+if [ "$DOCKER_AVAILABLE" = true ]; then
+    echo ""
+    log_info "Docker is detected on your system."
+    echo ""
+    echo "Installation modes:"
+    echo "  1. Docker mode (Recommended)"
+    echo "     - All services run in containers"
+    echo "     - Easier to manage and upgrade"
+    echo "     - Isolated environment"
+    echo ""
+    echo "  2. Native mode"
+    echo "     - Runs as systemd service"
+    echo "     - Requires local PostgreSQL"
+    echo "     - More manual configuration"
+    echo ""
+    read -p "Select installation mode [1/2] (default: 1): " -n 1 -r MODE_CHOICE
+    echo ""
+
+    if [[ -z "$MODE_CHOICE" ]] || [[ "$MODE_CHOICE" == "1" ]]; then
+        INSTALL_MODE="docker"
+        log_success "Docker mode selected"
+    else
+        INSTALL_MODE="native"
+        log_success "Native mode selected"
+    fi
+else
+    log_warn "Docker is not available or not running"
+    log_info "Using native mode installation"
+    INSTALL_MODE="native"
+    echo ""
+fi
+
+# Confirm installation
+echo ""
+read -p "Continue with ${INSTALL_MODE} mode installation? (Y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Nn]$ ]]; then
     log_info "Cancelled by user"
@@ -44,102 +94,95 @@ if [[ $REPLY =~ ^[Nn]$ ]]; then
 fi
 echo ""
 
-# Step 1: Install
-log_info "Step 1/4: Installing ${BINARY_NAME}..."
+# Ask about seed data
+LOAD_SEED_DATA=""
+echo ""
+log_info "Do you want to load seed data?"
+echo "  Seed data includes:"
+echo "    - Demo user account (demo/Demo123!)"
+echo "    - Test user accounts (john.doe, jane.smith, bob.wilson)"
+echo "    - Sample asset groups (dev/stage/prod)"
+echo "    - Sample hosts (8 example hosts)"
+echo "    - Sample audit logs and login events"
+echo ""
+echo -n "Load seed data? [y/N] "
+read -r response
+if [[ "$response" =~ ^[Yy]$ ]]; then
+    LOAD_SEED_DATA="--seed-data"
+    log_info "Seed data will be loaded"
+else
+    LOAD_SEED_DATA="--no-seed-data"
+    log_info "Seed data will NOT be loaded"
+fi
+echo ""
+
+# Run installation
+log_info "========================================="
+log_info "Installing ${BINARY_NAME} (${INSTALL_MODE} mode)"
+log_info "========================================="
+echo ""
+
 if [ -f "$SCRIPT_DIR/install.sh" ]; then
-    bash "$SCRIPT_DIR/install.sh"
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        bash "$SCRIPT_DIR/install.sh" --docker $LOAD_SEED_DATA
+    else
+        bash "$SCRIPT_DIR/install.sh" --native $LOAD_SEED_DATA
+    fi
 else
     log_error "install.sh not found"
     exit 1
 fi
 
-# Step 2: Fix localhost to 127.0.0.1 (WSL2 compatibility)
+# Post-installation steps
 echo ""
-log_info "Step 2/4: Checking configuration for WSL2 compatibility..."
-CONFIG_FILE="/etc/${BINARY_NAME}/env"
-if [ -f "$CONFIG_FILE" ]; then
-    if grep -q "@localhost:" "$CONFIG_FILE"; then
-        log_warn "Found 'localhost' in database URL (may cause DNS issues in WSL2)"
-        log_info "Automatically fixing to 127.0.0.1..."
-
-        # Backup original config
-        cp "$CONFIG_FILE" "${CONFIG_FILE}.pre-init-backup"
-
-        # Replace localhost with 127.0.0.1
-        sed -i 's/@localhost:/@127.0.0.1:/g' "$CONFIG_FILE"
-        log_success "Configuration updated for better compatibility"
-    else
-        log_success "Configuration already uses 127.0.0.1 or custom host"
-    fi
-else
-    log_warn "Configuration file not found, skipping"
-fi
-
-# Step 3: Check database
-echo ""
-log_info "Step 3/4: Verifying database setup..."
-
-# Check if Docker mode is being used
-if [ -d "/etc/${BINARY_NAME}/docker" ]; then
-    log_info "Docker installation detected, skipping database check"
-    log_warn "Docker containers will handle database setup automatically"
-else
-    if [ -f "$SCRIPT_DIR/check-db.sh" ]; then
-        bash "$SCRIPT_DIR/check-db.sh" || {
-            log_warn "Database check had warnings, but continuing..."
-        }
-    else
-        log_warn "check-db.sh not found, skipping database verification"
-    fi
-fi
-
-# Step 4: Start service
+log_info "========================================="
+log_info "Post-Installation Setup"
+log_info "========================================="
 echo ""
 
-# Check if Docker mode is being used
-if [ -d "/etc/${BINARY_NAME}/docker" ]; then
-    log_info "Step 4/4: Docker installation detected"
-    log_info "========================================="
+if [ "$INSTALL_MODE" = "docker" ]; then
+    # Docker mode - show quick start
     log_success "Docker Installation completed!"
-    log_success "========================================="
-    echo ""
-
-    # Display seed data status
-    if [ -f "/etc/${BINARY_NAME}/docker/.env" ] && grep -q "SEED=true" "/etc/${BINARY_NAME}/docker/.env"; then
-        log_info "Configuration:"
-        log_success "  Seed data: ✓ Enabled"
-        log_info "    - Demo accounts will be created"
-        log_info "    - Sample assets will be loaded"
-    fi
     echo ""
 
     log_info "Quick start:"
-    log_info "  1. Review configuration: cat /etc/${BINARY_NAME}/docker/.env"
-    log_info "  2. Start services: cd /etc/${BINARY_NAME}/docker && docker-compose up -d"
+    log_info "  1. Review configuration: cat docker/.env"
+    log_info "  2. Start services: cd docker && docker-compose up -d"
     log_info "  3. View logs: docker-compose logs -f"
-    log_info "  4. Stop services: docker-compose down"
+    log_info "  4. Check status: ./scripts/status.sh"
     echo ""
 
-    log_info "Services deployed:"
-    log_info "  - PostgreSQL database (port 5432, localhost only)"
-    log_info "  - API service (internal, accessible via Nginx)"
-    log_info "  - Nginx reverse proxy (ports 80, 443)"
-    echo ""
-
-    log_info "Default accounts after first start:"
-    log_info "  - admin / Admin123! (Administrator)"
-    log_info "  - demo  / Demo123!  (Operator)"
-    echo ""
-    log_warn "Remember to change default passwords!"
-    echo ""
     log_info "To start the services now, run:"
-    log_info "  cd /etc/${BINARY_NAME}/docker"
+    log_info "  cd docker"
     log_info "  docker-compose up -d"
     echo ""
-    log_info "For more information, see the documentation in the docs/ directory."
+
+    # Ask if user wants to start now
+    read -p "Start Docker services now? (Y/n): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        cd "$DOCKER_DIR" || exit 1
+        if docker compose version &>/dev/null; then
+            docker compose up -d
+        else
+            docker-compose up -d
+        fi
+
+        sleep 3
+
+        log_success "Services started!"
+        echo ""
+        log_info "Useful commands:"
+        log_info "  - View logs: cd docker && docker-compose logs -f"
+        log_info "  - Stop services: ./scripts/stop.sh"
+        log_info "  - Restart services: ./scripts/restart.sh"
+        log_info "  - Check status: ./scripts/status.sh"
+        echo ""
+    fi
 else
-    # Systemd mode
-    log_info "Step 4/4: Starting ${BINARY_NAME} service..."
+    # Native mode - run start script
+    log_info "Starting ${BINARY_NAME} service..."
+
     if [ -f "$SCRIPT_DIR/start.sh" ]; then
         bash "$SCRIPT_DIR/start.sh"
     else
@@ -157,6 +200,23 @@ else
     log_info "Next steps:"
     log_info "  - Check status: systemctl status ${BINARY_NAME}"
     log_info "  - View logs: journalctl -u ${BINARY_NAME} -f"
-    log_info "  - Run on boot: systemctl enable ${BINARY_NAME}"
+    log_info "  - Enable on boot: systemctl enable ${BINARY_NAME}"
     echo ""
 fi
+
+echo ""
+log_info "========================================="
+log_info "Useful Scripts"
+log_info "========================================="
+echo ""
+log_info "Available management scripts:"
+log_info "  - ./scripts/start.sh       Start the service"
+log_info "  - ./scripts/stop.sh        Stop the service"
+log_info "  - ./scripts/restart.sh     Restart the service"
+log_info "  - ./scripts/status.sh      Check service status"
+log_info "  - ./scripts/backup.sh      Backup configuration and data"
+log_info "  - ./scripts/update.sh      Update to new version"
+log_info "  - ./scripts/uninstall.sh   Uninstall the service"
+echo ""
+log_info "For more information, see the documentation in the docs/ directory."
+echo ""

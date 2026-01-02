@@ -62,10 +62,12 @@ log_success "Binary created: $BINARY_PATH ($BINARY_SIZE)"
 
 # Test binary (basic execution test)
 log_info "Testing binary..."
-if "$BINARY_PATH" --version >/dev/null 2>&1 || "$BINARY_NAME" --version >/dev/null 2>&1; then
-    log_success "Binary test passed"
+if "$BINARY_PATH" --version >/dev/null 2>&1; then
+    VERSION_OUTPUT=$("$BINARY_PATH" --version)
+    log_success "Binary test passed: $VERSION_OUTPUT"
 else
-    log_warn "Binary does not support --version flag (this is okay)"
+    log_error "Binary --version flag failed"
+    exit 1
 fi
 
 # Output only the binary path to stdout (for capture)
