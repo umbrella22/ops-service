@@ -64,38 +64,45 @@ log_success "Binary created: $BINARY_PATH ($BINARY_SIZE)"
 log_info "Testing binary..."
 
 # Detect if we need to use an emulator for cross-compiled binaries
-BINARY_EXEC="$BINARY_PATH"
+USE_QEMU=""
 if [ "$PLATFORM" = "arm64" ]; then
     # Check if we're cross-compiling (not on native ARM64)
     HOST_ARCH=$(uname -m)
     if [ "$HOST_ARCH" != "aarch64" ]; then
         # We're cross-compiling, try to use QEMU user emulator
-        if command_exists qemu-aarch64; then
-            BINARY_EXEC="qemu-aarch64 $BINARY_PATH"
-            log_info "Using QEMU emulator for ARM64 binary"
-        elif command_exists qemu-aarch64-static; then
-            BINARY_EXEC="qemu-aarch64-static $BINARY_PATH"
+        if command_exists qemu-aarch64-static; then
+            USE_QEMU="qemu-aarch64-static"
             log_info "Using QEMU static emulator for ARM64 binary"
+        elif command_exists qemu-aarch64; then
+            USE_QEMU="qemu-aarch64"
+            log_info "Using QEMU emulator for ARM64 binary"
         else
             log_warn "QEMU not found, skipping binary test for cross-compiled ARM64"
             log_warn "Install with: sudo apt install qemu-user-static"
-            # Skip the test for cross-compiled builds without QEMU
-            BINARY_EXEC=""
         fi
     fi
 fi
 
 # Only test if we have a way to execute the binary
-if [ -n "$BINARY_EXEC" ]; then
-    if $BINARY_EXEC --version >/dev/null 2>&1; then
-        VERSION_OUTPUT=$($BINARY_EXEC --version)
+if [ -n "$USE_QEMU" ]; then
+    if $USE_QEMU "$BINARY_PATH" --version >/dev/null 2>&1; then
+        VERSION_OUTPUT=$($USE_QEMU "$BINARY_PATH" --version)
+        log_success "Binary test passed: $VERSION_OUTPUT"
+    else
+        log_error "Binary --version flag failed"
+        exit 1
+    fi
+elif [ "$PLATFORM" != "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
+    # Native build or running on ARM64 host - test directly
+    if "$BINARY_PATH" --version >/dev/null 2>&1; then
+        VERSION_OUTPUT=$("$BINARY_PATH" --version)
         log_success "Binary test passed: $VERSION_OUTPUT"
     else
         log_error "Binary --version flag failed"
         exit 1
     fi
 else
-    log_warn "Skipping binary execution test (cross-compiled binary)"
+    log_warn "Skipping binary execution test (cross-compiled binary without QEMU)"
     log_warn "Binary will be tested on target platform"
 fi
 
