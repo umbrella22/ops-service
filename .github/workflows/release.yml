@@ -105,7 +105,7 @@ jobs:
 
   build-arm64:
     name: Build ARM64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: check-ci
 
     steps:
@@ -117,25 +117,10 @@ jobs:
       with:
         toolchain: stable
 
-    - name: Add ARM64 target
-      run: rustup target add aarch64-unknown-linux-gnu
-
-    - name: Install cross-compilation toolchain
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libssl-dev gcc-aarch64-linux-gnu
-
-    - name: Install QEMU user emulator
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y qemu-user-static
-        qemu-aarch64-static --version
-
-    - name: Configure ARM64 linker
-      run: |
-        mkdir -p ~/.cargo
-        echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-        echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+        sudo apt-get install -y pkg-config libssl-dev
 
     - name: Cache cargo registry
       uses: actions/cache@v4
@@ -223,6 +208,34 @@ jobs:
         SHA256_ARM64=$(cat release/ops-system-*-linux-arm64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "N/A")
 
         cat > release_notes.md << EOF
+        ## OPS System v${VERSION}
+
+        ### Downloads
+
+        **Linux x86_64**
+        - \`ops-system-${VERSION}-linux-x86_64.tar.gz\`
+        - SHA256: \`${SHA256_X86_64}\`
+
+        **Linux ARM64**
+        - \`ops-system-${VERSION}-linux-arm64.tar.gz\`
+        - SHA256: \`${SHA256_ARM64}\`
+
+        ### Installation
+
+        1. Download the package for your platform
+        2. Extract: \`tar -xzf ops-system-${VERSION}-linux-*.tar.gz\`
+        3. Enter directory: \`cd linux-*\`
+        4. Run install script: \`sudo ./scripts/install.sh\`
+
+        For detailed documentation, see the \`docs/\` directory in the package.
+
+        ### Checksum Verification
+
+        Verify your download with:
+        \`sha256sum -c ops-system-${VERSION}-linux-*.tar.gz.sha256\`
+
+        ---
+
         ## 运维系统 v${VERSION}
 
         ### 下载说明
