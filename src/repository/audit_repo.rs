@@ -93,7 +93,11 @@ impl AuditRepository {
             query.push_str(&format!(" AND trace_id = ${}", index));
         }
 
-        query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT ${} OFFSET ${}", index + 1, index + 2));
+        query.push_str(&format!(
+            " ORDER BY occurred_at DESC LIMIT ${} OFFSET ${}",
+            index + 1,
+            index + 2
+        ));
 
         let mut query_builder = sqlx::query_as::<_, AuditLog>(&query);
 
@@ -248,10 +252,7 @@ impl AuditRepository {
             query_builder = query_builder.bind(end_time);
         }
 
-        let events = query_builder
-            .bind(limit)
-            .fetch_all(&self.db)
-            .await?;
+        let events = query_builder.bind(limit).fetch_all(&self.db).await?;
 
         Ok(events)
     }

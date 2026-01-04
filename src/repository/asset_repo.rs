@@ -195,7 +195,8 @@ impl AssetRepository {
             index += 1;
             query.push_str(&format!(
                 " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
-                index, index + 1
+                index,
+                index + 1
             ));
             index += 1;
         }
@@ -324,7 +325,8 @@ impl AssetRepository {
             index += 1;
             query.push_str(&format!(
                 " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
-                index, index + 1
+                index,
+                index + 1
             ));
             index += 1;
         }

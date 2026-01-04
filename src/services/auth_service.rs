@@ -258,10 +258,7 @@ impl AuthService {
         let role_bindings = role_repo.get_user_role_bindings(user_id).await?;
 
         // 收集角色名称
-        let roles: Vec<String> = role_bindings
-            .iter()
-            .map(|r| r.role_name.clone())
-            .collect();
+        let roles: Vec<String> = role_bindings.iter().map(|r| r.role_name.clone()).collect();
 
         // 收集用户的所有权限（格式：resource:action）
         let mut scopes_set = std::collections::HashSet::new();
