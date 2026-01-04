@@ -15,7 +15,7 @@ pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_in: u64,
-    pub user: super::user::UserResponse,
+    pub user: super::user::UserWithRoles,
 }
 
 /// Token refresh request

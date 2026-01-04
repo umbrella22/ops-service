@@ -58,7 +58,7 @@ impl AuditRepository {
         offset: i64,
     ) -> Result<Vec<AuditLog>, AppError> {
         let mut query = String::from("SELECT * FROM audit_logs WHERE 1=1");
-        let mut index = 1;
+        let mut index = 0;
 
         if filters.subject_id.is_some() {
             index += 1;
@@ -93,9 +93,9 @@ impl AuditRepository {
             query.push_str(&format!(" AND trace_id = ${}", index));
         }
 
-        query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT {} OFFSET {}", limit, offset));
+        query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT ${} OFFSET ${}", index + 1, index + 2));
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query_as::<_, AuditLog>(&query);
 
         if let Some(subject_id) = filters.subject_id {
             query_builder = query_builder.bind(subject_id);
@@ -123,11 +123,10 @@ impl AuditRepository {
         }
 
         let logs = query_builder
+            .bind(limit)
+            .bind(offset)
             .fetch_all(&self.db)
-            .await?
-            .iter()
-            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
-            .collect();
+            .await?;
 
         Ok(logs)
     }
@@ -232,9 +231,9 @@ impl AuditRepository {
             query.push_str(&format!(" AND occurred_at <= ${}", index));
         }
 
-        query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT {}", limit));
+        query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT ${}", index + 1));
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query_as::<_, LoginEvent>(&query);
 
         if let Some(user_id) = user_id {
             query_builder = query_builder.bind(user_id);
@@ -250,11 +249,9 @@ impl AuditRepository {
         }
 
         let events = query_builder
+            .bind(limit)
             .fetch_all(&self.db)
-            .await?
-            .iter()
-            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
-            .collect();
+            .await?;
 
         Ok(events)
     }

@@ -474,7 +474,7 @@ BEGIN
         gen_random_uuid(),
         'admin',
         'admin@ops-system.local',
-        '$argon2id$v=19$m=65536,t=3,p=2$U3RhdGljU2FsdDEyMzQ1Njc4OTA$VGVzdEhhc2hGb3JBcmdvbjJCUGx1cw', -- Placeholder - will be replaced
+        '$argon2id$v=19$m=65536,t=3,p=4$ZCh5u+DL3T0pMzvmDajKlA$9jCTTIjyWgptllHK3ptDzGwFXFd06c8NC/P+j9z199g', -- Password: Admin123!
         'System Administrator',
         'enabled',
         TRUE

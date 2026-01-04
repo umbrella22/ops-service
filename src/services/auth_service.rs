@@ -82,7 +82,7 @@ impl AuthService {
             &user.id,
             &user.username,
             roles.clone(),
-            scopes,
+            scopes.clone(),
         )?;
 
         // 存储刷新令牌
@@ -114,11 +114,18 @@ impl AuthService {
         )
         .await;
 
+        // 构建包含角色和权限的用户信息
+        let user_response = UserWithRoles {
+            user: UserResponse::from(user),
+            roles: roles.clone(),
+            scopes: scopes.clone(),
+        };
+
         Ok(LoginResponse {
             access_token: token_pair.access_token,
             refresh_token: token_pair.refresh_token,
             expires_in: token_pair.expires_in,
-            user: UserResponse::from(user),
+            user: user_response,
         })
     }
 
@@ -242,27 +249,33 @@ impl AuthService {
         Ok(())
     }
 
-    /// 获取用户的角色和权限范围
+    /// 获取用户的角色和权限
     async fn get_user_roles_and_scopes(
         &self,
         user_id: Uuid,
     ) -> Result<(Vec<String>, Vec<String>), AppError> {
-        let user_repo = UserRepository::new(self.db.clone());
-        let role_bindings: Vec<crate::models::role::RoleBinding> =
-            user_repo.get_user_roles(user_id).await?;
+        let role_repo = crate::repository::role_repo::RoleRepository::new(self.db.clone());
+        let role_bindings = role_repo.get_user_role_bindings(user_id).await?;
 
-        let roles: Vec<String> = role_bindings.iter().map(|r| r.role_name.clone()).collect();
-
-        // 从角色绑定中收集权限范围
-        let scopes: Vec<String> = role_bindings
+        // 收集角色名称
+        let roles: Vec<String> = role_bindings
             .iter()
-            .map(|binding| match binding.scope_type.as_str() {
-                "global" => "global".to_string(),
-                "group" => format!("group:{}", binding.scope_value.as_deref().unwrap_or("*")),
-                "environment" => format!("env:{}", binding.scope_value.as_deref().unwrap_or("*")),
-                _ => "global".to_string(),
-            })
+            .map(|r| r.role_name.clone())
             .collect();
+
+        // 收集用户的所有权限（格式：resource:action）
+        let mut scopes_set = std::collections::HashSet::new();
+
+        for binding in &role_bindings {
+            let permissions = role_repo.get_role_permissions(binding.role_id).await?;
+
+            for perm in permissions {
+                // 将权限转换为 resource:action 格式
+                scopes_set.insert(format!("{}:{}", perm.resource, perm.action));
+            }
+        }
+
+        let scopes: Vec<String> = scopes_set.into_iter().collect();
 
         Ok((roles, scopes))
     }

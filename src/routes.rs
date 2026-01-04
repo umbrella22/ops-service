@@ -36,7 +36,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         auth_service,
         permission_service,
         audit_service,
-        jwt_service,
+        jwt_service: jwt_service.clone(),
     };
 
     // 包装在 Arc 中
@@ -50,13 +50,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // 认证路由（无需认证，但应用速率限制）
     let auth_routes = Router::new()
         .route("/api/v1/auth/login", post(handlers::auth::login))
-        .route("/api/v1/auth/refresh", post(handlers::auth::refresh_token))
-        .route("/api/v1/auth/logout", post(handlers::auth::logout));
+        .route("/api/v1/auth/refresh", post(handlers::auth::refresh_token));
 
     // 需要认证的路由
     let authenticated_routes = Router::new()
         // 当前用户信息
         .route("/api/v1/auth/me", get(handlers::auth::get_current_user))
+        .route("/api/v1/auth/logout", post(handlers::auth::logout))
         .route("/api/v1/auth/logout-all", post(handlers::auth::logout_all))
 
         // 用户管理（需要权限）
@@ -101,7 +101,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
         // 审计日志（需要审计权限）
         .route("/api/v1/audit/logs", get(handlers::audit::list_audit_logs))
-        .route("/api/v1/audit/login-events", get(handlers::audit::list_login_events));
+        .route("/api/v1/audit/login-events", get(handlers::audit::list_login_events))
+        .layer(axum::middleware::from_fn_with_state(
+            jwt_service.clone(),
+            crate::auth::middleware::jwt_auth_middleware,
+        ));
 
     // 指标端点
     let metrics_routes = Router::new().route("/metrics", get(handlers::metrics::metrics_export));

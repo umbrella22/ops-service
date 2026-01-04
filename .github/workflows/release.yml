@@ -85,7 +85,8 @@ jobs:
     - name: Run quick tests before build
       run: |
         echo "Running quick sanity checks..."
-        cargo test --lib --no-fail-fast || echo "⚠️ Some tests failed, but continuing with release build"
+        cargo test --lib --no-fail-fast
+      continue-on-error: false
 
     - name: Build package
       run: make package-x86_64
@@ -126,19 +127,19 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-arm64-${{ hashFiles('**/Cargo.lock') }}
+        key: Linux-arm64-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Cache cargo index
       uses: actions/cache@v4
       with:
         path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-arm64-${{ hashFiles('**/Cargo.lock') }}
+        key: Linux-arm64-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Cache cargo build
       uses: actions/cache@v4
       with:
         path: target
-        key: ${{ runner.os }}-cargo-build-target-arm64-${{ hashFiles('**/Cargo.lock') }}
+        key: Linux-arm64-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build package
       run: make package-arm64

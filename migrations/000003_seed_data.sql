@@ -19,7 +19,7 @@ BEGIN
     VALUES (
         'demo',
         'demo@ops-system.local',
-        '$argon2id$v=19$m=65536,t=3,p=2$U3RhdGljU2FsdDEyMzQ1Njc4OTA$VGVzdEhhc2hGb3JBcmdvbjJCUGx1cw',
+        '$argon2id$v=19$m=65536,t=3,p=4$mP+j6QhTsozyICFqnpcXow$3ZHgLZQyJjv8/CnuEGvX0Y8S4lMdKQ9tNXhPXvcyePM',
         'Demo User',
         'Operations',
         'enabled'
@@ -39,11 +39,11 @@ BEGIN
     END IF;
 END $$;
 
--- 创建更多测试用户
+-- 创建更多测试用户 (密码均为: Demo123!)
 INSERT INTO users (username, email, password_hash, full_name, department, status) VALUES
-    ('john.doe', 'john.doe@example.com', '$argon2id$v=19$m=65536,t=3,p=2$U3RhdGljU2FsdDEyMzQ1Njc4OTA$VGVzdEhhc2hGb3JBcmdvbjJCUGx1cw', 'John Doe', 'Engineering', 'enabled'),
-    ('jane.smith', 'jane.smith@example.com', '$argon2id$v=19$m=65536,t=3,p=2$U3RhdGljU2FsdDEyMzQ1Njc4OTA$VGVzdEhhc2hGb3JBcmdvbjJCUGx1cw', 'Jane Smith', 'Operations', 'enabled'),
-    ('bob.wilson', 'bob.wilson@example.com', '$argon2id$v=19$m=65536,t=3,p=2$U3RhdGljU2FsdDEyMzQ1Njc4OTA$VGVzdEhhc2hGb3JBcmdvbjJCUGx1cw', 'Bob Wilson', 'QA', 'enabled')
+    ('john.doe', 'john.doe@example.com', '$argon2id$v=19$m=65536,t=3,p=4$mP+j6QhTsozyICFqnpcXow$3ZHgLZQyJjv8/CnuEGvX0Y8S4lMdKQ9tNXhPXvcyePM', 'John Doe', 'Engineering', 'enabled'),
+    ('jane.smith', 'jane.smith@example.com', '$argon2id$v=19$m=65536,t=3,p=4$mP+j6QhTsozyICFqnpcXow$3ZHgLZQyJjv8/CnuEGvX0Y8S4lMdKQ9tNXhPXvcyePM', 'Jane Smith', 'Operations', 'enabled'),
+    ('bob.wilson', 'bob.wilson@example.com', '$argon2id$v=19$m=65536,t=3,p=4$mP+j6QhTsozyICFqnpcXow$3ZHgLZQyJjv8/CnuEGvX0Y8S4lMdKQ9tNXhPXvcyePM', 'Bob Wilson', 'QA', 'enabled')
 ON CONFLICT (username) DO NOTHING;
 
 -- ============================================

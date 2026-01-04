@@ -136,7 +136,7 @@ impl AssetRepository {
         .bind(req.port)
         .bind(req.group_id)
         .bind(&req.environment)
-        .bind(&req.tags) // 自动转换为 JSONB
+        .bind(sqlx::types::Json(req.tags.clone())) // 转换为 Json
         .bind(req.owner_id)
         .bind(&req.status)
         .bind(&req.notes)
@@ -195,17 +195,18 @@ impl AssetRepository {
             index += 1;
             query.push_str(&format!(
                 " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
-                index, index
+                index, index + 1
             ));
+            index += 1;
         }
         if let Some(_tags) = &filters.tags {
             index += 1;
             query.push_str(&format!(" AND tags @> ${}", index));
         }
 
-        query.push_str(&format!(" ORDER BY identifier LIMIT {} OFFSET {}", limit, offset));
+        query.push_str(&format!(" ORDER BY identifier LIMIT ${} OFFSET ${}", index + 1, index + 2));
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query_as::<_, Host>(&query);
 
         if let Some(group_id) = &filters.group_id {
             query_builder = query_builder.bind(group_id);
@@ -223,15 +224,14 @@ impl AssetRepository {
             query_builder = query_builder.bind(&search_pattern);
         }
         if let Some(tags) = &filters.tags {
-            query_builder = query_builder.bind(tags);
+            query_builder = query_builder.bind(sqlx::types::Json(tags.clone()));
         }
 
         let hosts = query_builder
+            .bind(limit)
+            .bind(offset)
             .fetch_all(&self.db)
-            .await?
-            .iter()
-            .map(|row: &sqlx::postgres::PgRow| sqlx::FromRow::from_row(row).unwrap())
-            .collect();
+            .await?;
 
         Ok(hosts)
     }
@@ -249,6 +249,9 @@ impl AssetRepository {
         if current.version != req.version {
             return Err(AppError::BadRequest("资源已被其他用户修改".to_string()));
         }
+
+        // 转换tags为Json类型
+        let tags_json = req.tags.as_ref().map(|t| sqlx::types::Json(t.clone()));
 
         let host = sqlx::query_as::<_, Host>(
             r#"
@@ -277,7 +280,7 @@ impl AssetRepository {
         .bind(req.port)
         .bind(req.group_id)
         .bind(&req.environment)
-        .bind(&req.tags)
+        .bind(&tags_json)
         .bind(req.owner_id)
         .bind(&req.status)
         .bind(&req.notes)
@@ -321,8 +324,9 @@ impl AssetRepository {
             index += 1;
             query.push_str(&format!(
                 " AND (identifier ILIKE ${} OR display_name ILIKE ${})",
-                index, index
+                index, index + 1
             ));
+            index += 1;
         }
         if let Some(_tags) = &filters.tags {
             index += 1;
@@ -347,7 +351,7 @@ impl AssetRepository {
             query_builder = query_builder.bind(&search_pattern);
         }
         if let Some(tags) = &filters.tags {
-            query_builder = query_builder.bind(tags);
+            query_builder = query_builder.bind(sqlx::types::Json(tags.clone()));
         }
 
         let count: i64 = query_builder.fetch_one(&self.db).await?.get(0);

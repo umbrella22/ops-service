@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 use uuid::Uuid;
 
 /// Asset group
@@ -45,7 +46,7 @@ pub struct Host {
     pub port: i32,
     pub group_id: Uuid,
     pub environment: String,
-    pub tags: Vec<String>, // Stored as JSONB
+    pub tags: Json<Vec<String>>, // Stored as JSONB
     pub owner_id: Option<Uuid>,
     pub status: String,
     pub notes: Option<String>,
