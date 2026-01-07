@@ -78,7 +78,10 @@ pub async fn get_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.find_by_id(&id).await?.ok_or_else(|| AppError::not_found("User not found"))?;
+    let user = repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| AppError::not_found("User not found"))?;
 
     Ok(Json(UserResponse::from(user)))
 }
@@ -97,7 +100,10 @@ pub async fn update_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.update(id, &req).await?.ok_or_else(|| AppError::not_found("User not found"))?;
+    let user = repo
+        .update(id, &req)
+        .await?
+        .ok_or_else(|| AppError::not_found("User not found"))?;
 
     Ok(Json(json!({
         "message": "用户更新成功",

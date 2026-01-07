@@ -49,32 +49,32 @@ pub struct BuildJob {
     pub job_id: Uuid, // 关联到 Job 表
 
     // 代码来源
-    pub repository: String,           // 仓库地址
-    pub branch: String,               // 分支
-    pub commit_hash: String,          // Commit hash
-    pub commit_message: Option<String>, // Commit 消息
-    pub commit_author: Option<String>, // Commit 作者
+    pub repository: String,                 // 仓库地址
+    pub branch: String,                     // 分支
+    pub commit_hash: String,                // Commit hash
+    pub commit_message: Option<String>,     // Commit 消息
+    pub commit_author: Option<String>,      // Commit 作者
     pub commit_time: Option<DateTime<Utc>>, // Commit 时间
 
     // 构建类型与配置
     pub build_type: BuildType,
     pub build_parameters: Json<serde_json::Value>, // 构建参数（灵活配置）
-    pub docker_image: Option<String>,  // 使用的 Docker 镜像
-    pub runner_capability: RunnerCapability, // 需要的 Runner 能力
+    pub docker_image: Option<String>,              // 使用的 Docker 镜像
+    pub runner_capability: RunnerCapability,       // 需要的 Runner 能力
 
     // 构建状态
     pub status: JobStatus,
 
     // 构建输出
-    pub build_summary: Option<String>, // 构建摘要
+    pub build_summary: Option<String>,  // 构建摘要
     pub build_log_path: Option<String>, // 构建日志存储路径
 
     // 产物信息
-    pub has_artifacts: bool,           // 是否有产物
-    pub artifact_count: i32,           // 产物数量
+    pub has_artifacts: bool, // 是否有产物
+    pub artifact_count: i32, // 产物数量
 
     // 审计字段
-    pub triggered_by: Uuid,            // 触发者
+    pub triggered_by: Uuid, // 触发者
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
@@ -119,13 +119,13 @@ pub enum StepStatus {
 pub struct BuildStep {
     pub id: Uuid,
     pub build_job_id: Uuid,
-    pub step_order: i32,        // 步骤顺序
-    pub step_name: String,      // 步骤名称
-    pub step_type: String,      // 步骤类型（clone/compile/test/package等）
+    pub step_order: i32,   // 步骤顺序
+    pub step_name: String, // 步骤名称
+    pub step_type: String, // 步骤类型（clone/compile/test/package等）
     pub status: StepStatus,
 
     // 步骤执行信息
-    pub command: Option<String>,       // 执行的命令
+    pub command: Option<String>, // 执行的命令
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub duration_secs: Option<i64>,
@@ -146,28 +146,28 @@ pub struct BuildArtifact {
     pub build_job_id: Uuid,
 
     // 产物信息
-    pub artifact_name: String,        // 产物名称
-    pub artifact_type: String,        // 产物类型（binary/docker_image/archive等）
-    pub artifact_path: String,        // 存储路径
-    pub artifact_size: i64,           // 大小（字节）
-    pub artifact_hash: String,        // Hash（SHA256）
-    pub version: Option<String>,      // 版本号
+    pub artifact_name: String,   // 产物名称
+    pub artifact_type: String,   // 产物类型（binary/docker_image/archive等）
+    pub artifact_path: String,   // 存储路径
+    pub artifact_size: i64,      // 大小（字节）
+    pub artifact_hash: String,   // Hash（SHA256）
+    pub version: Option<String>, // 版本号
 
     // 产物元数据
     pub metadata: Json<serde_json::Value>, // 额外元数据
 
     // 安全信息
-    pub scanned: bool,                // 是否已扫描
-    pub scan_result: Option<String>,  // 扫描结果摘要
+    pub scanned: bool,                      // 是否已扫描
+    pub scan_result: Option<String>,        // 扫描结果摘要
     pub vulnerabilities_count: Option<i32>, // 漏洞数量
 
     // 访问控制
-    pub is_public: bool,              // 是否公开
-    pub download_count: i32,          // 下载次数
+    pub is_public: bool,     // 是否公开
+    pub download_count: i32, // 下载次数
 
     // 审计字段
     pub created_at: DateTime<Utc>,
-    pub uploaded_by: Uuid,            // 上传者
+    pub uploaded_by: Uuid, // 上传者
 }
 
 /// Runner 配置
@@ -179,14 +179,14 @@ pub struct Runner {
 
     // Runner 能力
     pub capabilities: Json<Vec<RunnerCapability>>, // 支持的能力列表
-    pub docker_supported: bool,     // 是否支持 Docker
+    pub docker_supported: bool,                    // 是否支持 Docker
 
     // 资源限制
-    pub max_concurrent_jobs: i32,   // 最大并发任务数
-    pub current_jobs: i32,          // 当前运行任务数
+    pub max_concurrent_jobs: i32, // 最大并发任务数
+    pub current_jobs: i32,        // 当前运行任务数
 
     // 状态
-    pub status: String,             // active/maintenance/disabled
+    pub status: String, // active/maintenance/disabled
     pub last_heartbeat: Option<DateTime<Utc>>,
 
     // 网络配置

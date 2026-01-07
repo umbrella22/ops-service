@@ -41,7 +41,11 @@ fn test_user_status_to_string() {
 
 #[test]
 fn test_user_status_round_trip() {
-    let statuses = vec![UserStatus::Enabled, UserStatus::Disabled, UserStatus::Locked];
+    let statuses = vec![
+        UserStatus::Enabled,
+        UserStatus::Disabled,
+        UserStatus::Locked,
+    ];
 
     for status in statuses {
         let string: String = status.clone().into();
@@ -413,10 +417,7 @@ fn test_model_with_special_characters_in_description() {
     }"#;
     let req: CreateRoleRequest = serde_json::from_str(json).unwrap();
 
-    assert_eq!(
-        req.description,
-        Some("Role with special chars: @#$%^&*()".to_string())
-    );
+    assert_eq!(req.description, Some("Role with special chars: @#$%^&*()".to_string()));
 }
 
 // ==================== 空值和边界测试 ====================

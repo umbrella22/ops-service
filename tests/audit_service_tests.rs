@@ -319,8 +319,12 @@ fn test_audit_action_variety() {
     let role_actions_count = 5; // RoleCreate, Update, Delete, RoleBindingCreate, Delete
     let approval_actions_count = 7; // ApprovalCreate, Approve, Reject, Cancel, ApprovalGroupCreate, Update, Delete
 
-    let total_expected = user_actions_count + asset_actions_count + job_actions_count
-        + build_actions_count + role_actions_count + approval_actions_count;
+    let total_expected = user_actions_count
+        + asset_actions_count
+        + job_actions_count
+        + build_actions_count
+        + role_actions_count
+        + approval_actions_count;
 
     // 验证我们有正确数量的审计操作
     let defined_actions = [

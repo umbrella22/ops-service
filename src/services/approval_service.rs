@@ -1,9 +1,9 @@
 //! Approval service
 //! P3 阶段：审批流服务
 
-use std::sync::Arc;
 use chrono::{Duration, Utc};
 use sqlx::{Pool, Postgres};
+use std::sync::Arc;
 use tracing::{error, info, instrument};
 use uuid::Uuid;
 
@@ -66,7 +66,7 @@ impl ApprovalService {
                 'pending', 0, $9, NOW(),
                 $10, $11, $12
             ) RETURNING *
-            "#
+            "#,
         )
         .bind(approval_id)
         .bind(request.job_id)
@@ -88,14 +88,16 @@ impl ApprovalService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            requested_by,
-            AuditAction::ApprovalCreate,
-            Some("approval_requests"),
-            Some(approval_id),
-            Some(&format!("Approval request: {}", request.title)),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                requested_by,
+                AuditAction::ApprovalCreate,
+                Some("approval_requests"),
+                Some(approval_id),
+                Some(&format!("Approval request: {}", request.title)),
+                None,
+            )
+            .await?;
 
         // 发布新审批请求事件
         if let Some(job_id) = request.job_id {
@@ -202,7 +204,7 @@ impl ApprovalService {
 
         // 获取审批请求
         let approval_req = sqlx::query_as::<_, ApprovalRequest>(
-            "SELECT * FROM approval_requests WHERE id = $1 FOR UPDATE"
+            "SELECT * FROM approval_requests WHERE id = $1 FOR UPDATE",
         )
         .bind(approval_id)
         .fetch_one(&mut *tx)
@@ -270,7 +272,7 @@ impl ApprovalService {
                 $1, $2, $3, $4,
                 $5, $6, NOW()
             )
-            "#
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(approval_id)
@@ -301,11 +303,12 @@ impl ApprovalService {
             ApprovalStatus::Pending
         };
 
-        let completed_at = if matches!(new_status, ApprovalStatus::Approved | ApprovalStatus::Rejected) {
-            Some(Utc::now())
-        } else {
-            None
-        };
+        let completed_at =
+            if matches!(new_status, ApprovalStatus::Approved | ApprovalStatus::Rejected) {
+                Some(Utc::now())
+            } else {
+                None
+            };
 
         sqlx::query(
             "UPDATE approval_requests SET status = $1, current_approvals = $2, completed_at = $3, updated_at = NOW() WHERE id = $4"
@@ -333,21 +336,24 @@ impl ApprovalService {
             _ => AuditAction::ApprovalCreate, // fallback
         };
 
-        self.audit_service.log_action_simple(
-            approver_id,
-            audit_action,
-            Some("approval_requests"),
-            Some(approval_id),
-            Some(&format!("Decision: {:?}", request.decision)),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                approver_id,
+                audit_action,
+                Some("approval_requests"),
+                Some(approval_id),
+                Some(&format!("Decision: {:?}", request.decision)),
+                None,
+            )
+            .await?;
 
         // 发布审批状态变更事件
-        self.event_bus.publish(RealtimeEvent::ApprovalStatusChanged {
-            approval_id,
-            old_status: format!("{:?}", approval_req.status),
-            new_status: format!("{:?}", new_status),
-        })?;
+        self.event_bus
+            .publish(RealtimeEvent::ApprovalStatusChanged {
+                approval_id,
+                old_status: format!("{:?}", approval_req.status),
+                new_status: format!("{:?}", new_status),
+            })?;
 
         info!(
             approval_id = %approval_id,
@@ -385,14 +391,16 @@ impl ApprovalService {
         }
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            cancelled_by,
-            AuditAction::ApprovalCancel,
-            Some("approval_requests"),
-            Some(approval_id),
-            Some("Cancelled approval request"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                cancelled_by,
+                AuditAction::ApprovalCancel,
+                Some("approval_requests"),
+                Some(approval_id),
+                Some("Cancelled approval request"),
+                None,
+            )
+            .await?;
 
         info!(approval_id = %approval_id, "Approval request cancelled successfully");
         Ok(())
@@ -416,7 +424,7 @@ impl ApprovalService {
                 $1, $2, $3, $4, $5,
                 $6, $7, true, $8
             ) RETURNING *
-            "#
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(&request.name)
@@ -434,14 +442,16 @@ impl ApprovalService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            created_by,
-            AuditAction::ApprovalGroupCreate,
-            Some("approval_groups"),
-            Some(group.id),
-            Some(&format!("Approval group: {}", request.name)),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                created_by,
+                AuditAction::ApprovalGroupCreate,
+                Some("approval_groups"),
+                Some(group.id),
+                Some(&format!("Approval group: {}", request.name)),
+                None,
+            )
+            .await?;
 
         info!(group_id = %group.id, "Approval group created successfully");
         Ok(group)
@@ -455,9 +465,9 @@ impl ApprovalService {
         target_hosts: &[Host],
     ) -> Result<bool> {
         // 检查是否为生产环境
-        let is_production = target_hosts.iter().any(|h| {
-            h.environment.to_lowercase() == "production"
-        });
+        let is_production = target_hosts
+            .iter()
+            .any(|h| h.environment.to_lowercase() == "production");
 
         // 检查目标主机数量
         let target_count = target_hosts.len() as i32;
@@ -473,7 +483,8 @@ impl ApprovalService {
             self.is_critical_group(h.group_id)
         });
 
-        let requires_approval = is_production || exceeds_threshold || is_high_risk || is_critical_group;
+        let requires_approval =
+            is_production || exceeds_threshold || is_high_risk || is_critical_group;
 
         if requires_approval {
             info!(
@@ -505,9 +516,9 @@ impl ApprovalService {
         ];
 
         let command_lower = command.to_lowercase();
-        high_risk_patterns.iter().any(|pattern| {
-            command_lower.contains(&pattern.to_lowercase())
-        })
+        high_risk_patterns
+            .iter()
+            .any(|pattern| command_lower.contains(&pattern.to_lowercase()))
     }
 
     /// 检查分组是否为关键分组
@@ -539,18 +550,16 @@ impl ApprovalService {
     /// 获取审批统计
     #[instrument(skip(self))]
     pub async fn get_approval_statistics(&self) -> Result<ApprovalStatistics> {
-        let total_requests = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM approval_requests"
-        )
-        .fetch_one(&self.db)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "Failed to count total requests");
-            AppError::database("Failed to count requests")
-        })?;
+        let total_requests = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM approval_requests")
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "Failed to count total requests");
+                AppError::database("Failed to count requests")
+            })?;
 
         let pending_requests = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'"
+            "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'",
         )
         .fetch_one(&self.db)
         .await
@@ -560,7 +569,7 @@ impl ApprovalService {
         })?;
 
         let approved_requests = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM approval_requests WHERE status = 'approved'"
+            "SELECT COUNT(*) FROM approval_requests WHERE status = 'approved'",
         )
         .fetch_one(&self.db)
         .await
@@ -570,7 +579,7 @@ impl ApprovalService {
         })?;
 
         let rejected_requests = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM approval_requests WHERE status = 'rejected'"
+            "SELECT COUNT(*) FROM approval_requests WHERE status = 'rejected'",
         )
         .fetch_one(&self.db)
         .await
@@ -580,7 +589,7 @@ impl ApprovalService {
         })?;
 
         let timeout_requests = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM approval_requests WHERE status = 'timeout'"
+            "SELECT COUNT(*) FROM approval_requests WHERE status = 'timeout'",
         )
         .fetch_one(&self.db)
         .await
@@ -595,7 +604,7 @@ impl ApprovalService {
             SELECT AVG(EXTRACT(EPOCH FROM (completed_at - requested_at)) / 60)
             FROM approval_requests
             WHERE completed_at IS NOT NULL
-            "#
+            "#,
         )
         .fetch_one(&self.db)
         .await

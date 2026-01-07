@@ -175,7 +175,11 @@ impl AuditService {
             source_ip: None,
             user_agent: None,
             trace_id: None,
-            result: if error_message.is_some() { "failure" } else { "success" },
+            result: if error_message.is_some() {
+                "failure"
+            } else {
+                "success"
+            },
             error_message,
         };
 
@@ -212,5 +216,4 @@ impl AuditService {
         repo.query_login_events(user_id, event_type, start_time, end_time, limit)
             .await
     }
-
 }

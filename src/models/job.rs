@@ -84,22 +84,22 @@ pub struct Job {
     pub status: JobStatus,
 
     // 目标集信息
-    pub target_hosts: Json<Vec<Uuid>>, // 固化的目标主机ID列表
+    pub target_hosts: Json<Vec<Uuid>>,  // 固化的目标主机ID列表
     pub target_groups: Json<Vec<Uuid>>, // 目标分组ID列表
 
     // 执行参数
-    pub command: Option<String>,       // 命令作业的命令
-    pub script: Option<String>,        // 脚本作业的脚本内容
-    pub script_path: Option<String>,   // 脚本路径（如适用）
+    pub command: Option<String>,     // 命令作业的命令
+    pub script: Option<String>,      // 脚本作业的脚本内容
+    pub script_path: Option<String>, // 脚本路径（如适用）
 
     // 执行配置
-    pub concurrent_limit: Option<i32>,     // 并发上限
-    pub timeout_secs: Option<i32>,         // 超时时间（秒）
-    pub retry_times: Option<i32>,          // 重试次数
-    pub execute_user: Option<String>,      // 执行用户
+    pub concurrent_limit: Option<i32>, // 并发上限
+    pub timeout_secs: Option<i32>,     // 超时时间（秒）
+    pub retry_times: Option<i32>,      // 重试次数
+    pub execute_user: Option<String>,  // 执行用户
 
     // 幂等性控制
-    pub idempotency_key: Option<String>,   // 幂等键
+    pub idempotency_key: Option<String>, // 幂等键
 
     // 结果统计
     pub total_tasks: i32,
@@ -255,6 +255,6 @@ pub struct JobStatistics {
     pub cancelled_tasks: i32,
     pub pending_tasks: i32,
     pub running_tasks: i32,
-    pub success_rate: f64, // 成功率
+    pub success_rate: f64,              // 成功率
     pub avg_duration_secs: Option<f64>, // 平均执行时长
 }

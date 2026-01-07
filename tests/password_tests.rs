@@ -53,7 +53,9 @@ fn test_password_hash_and_verify() {
     assert!(hash.contains("$argon2"));
 
     // 验证正确密码
-    hasher.verify(password, &hash).expect("Verification should succeed");
+    hasher
+        .verify(password, &hash)
+        .expect("Verification should succeed");
 }
 
 #[test]
@@ -80,8 +82,12 @@ fn test_password_hash_different_each_time() {
     assert_ne!(hash1, hash2, "Hashes should be different due to salt");
 
     // 但两个哈希都应该能验证同一个密码
-    hasher.verify(password, &hash1).expect("First hash should verify");
-    hasher.verify(password, &hash2).expect("Second hash should verify");
+    hasher
+        .verify(password, &hash1)
+        .expect("First hash should verify");
+    hasher
+        .verify(password, &hash2)
+        .expect("Second hash should verify");
 }
 
 #[test]
@@ -92,7 +98,9 @@ fn test_password_hash_empty_string() {
     let hash = hasher.hash(password).expect("Empty password should hash");
 
     // 空密码应该能验证
-    hasher.verify(password, &hash).expect("Empty password should verify");
+    hasher
+        .verify(password, &hash)
+        .expect("Empty password should verify");
 
     // 非空密码应该验证失败
     assert!(hasher.verify("password", &hash).is_err());
@@ -105,7 +113,9 @@ fn test_password_hash_unicode() {
 
     let hash = hasher.hash(password).expect("Unicode password should hash");
 
-    hasher.verify(password, &hash).expect("Unicode password should verify");
+    hasher
+        .verify(password, &hash)
+        .expect("Unicode password should verify");
 
     // 稍有不同的 Unicode 密码应该失败
     assert!(hasher.verify("密码测试Test123🔒", &hash).is_err());
@@ -119,7 +129,9 @@ fn test_password_hash_long_password() {
 
     let hash = hasher.hash(&password).expect("Long password should hash");
 
-    hasher.verify(&password, &hash).expect("Long password should verify");
+    hasher
+        .verify(&password, &hash)
+        .expect("Long password should verify");
 }
 
 #[test]

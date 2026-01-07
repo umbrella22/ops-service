@@ -2,8 +2,8 @@
 //!
 //! 测试应用错误类型的各种行为
 
-use ops_system::error::{AppError, ErrorResponse};
 use axum::http::StatusCode;
+use ops_system::error::{AppError, ErrorResponse};
 use serde_json;
 
 // ==================== 错误状态码测试 ====================
@@ -16,22 +16,13 @@ fn test_error_status_codes() {
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(AppError::Forbidden.status_code(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        AppError::NotFound("resource".to_string()).status_code(),
-        StatusCode::NOT_FOUND
-    );
+    assert_eq!(AppError::NotFound("resource".to_string()).status_code(), StatusCode::NOT_FOUND);
     assert_eq!(
         AppError::BadRequest("invalid".to_string()).status_code(),
         StatusCode::BAD_REQUEST
     );
-    assert_eq!(
-        AppError::Validation("error".to_string()).status_code(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        AppError::RateLimitExceeded.status_code(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    assert_eq!(AppError::Validation("error".to_string()).status_code(), StatusCode::BAD_REQUEST);
+    assert_eq!(AppError::RateLimitExceeded.status_code(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         AppError::Timeout("request".to_string()).status_code(),
         StatusCode::REQUEST_TIMEOUT
@@ -42,28 +33,19 @@ fn test_error_status_codes() {
 fn test_database_error_status_code() {
     let db_error = sqlx::Error::RowNotFound;
     let app_error = AppError::Database(db_error);
-    assert_eq!(
-        app_error.status_code(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
+    assert_eq!(app_error.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[test]
 fn test_config_error_status_code() {
     let app_error = AppError::Config("Invalid config".to_string());
-    assert_eq!(
-        app_error.status_code(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
+    assert_eq!(app_error.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[test]
 fn test_internal_error_status_code() {
     let app_error = AppError::Internal("Something went wrong".to_string());
-    assert_eq!(
-        app_error.status_code(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
+    assert_eq!(app_error.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 // ==================== 用户消息测试 ====================
@@ -126,19 +108,13 @@ fn test_user_messages_for_server_errors() {
     );
 
     // 限流
-    assert_eq!(
-        AppError::RateLimitExceeded.user_message(),
-        "Rate limit exceeded"
-    );
+    assert_eq!(AppError::RateLimitExceeded.user_message(), "Rate limit exceeded");
 }
 
 #[test]
 fn test_user_messages_for_internal_errors() {
     let internal = AppError::Internal("Failed to process".to_string());
-    assert_eq!(
-        internal.user_message(),
-        "Internal server error: Failed to process"
-    );
+    assert_eq!(internal.user_message(), "Internal server error: Failed to process");
 }
 
 // ==================== 错误码测试 ====================
@@ -203,10 +179,7 @@ fn test_convenience_methods() {
 
 #[test]
 fn test_error_display() {
-    assert_eq!(
-        format!("{}", AppError::Unauthorized),
-        "Authentication failed"
-    );
+    assert_eq!(format!("{}", AppError::Unauthorized), "Authentication failed");
     assert_eq!(format!("{}", AppError::Forbidden), "Access denied");
     assert_eq!(
         format!("{}", AppError::NotFound("User".to_string())),

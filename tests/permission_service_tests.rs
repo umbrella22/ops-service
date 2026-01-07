@@ -41,13 +41,8 @@ fn test_scope_matches_global() {
 #[test]
 fn test_scope_matches_group() {
     let user_id = Uuid::new_v4();
-    let binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "editor",
-        "group",
-        Some("web-servers"),
-    );
+    let binding =
+        create_role_binding(user_id, Uuid::new_v4(), "editor", "group", Some("web-servers"));
 
     // 应该匹配相同组
     assert!(scope_matches_helper(&binding, Some("group"), Some("web-servers")));
@@ -66,27 +61,14 @@ fn test_scope_matches_group() {
 #[test]
 fn test_scope_matches_environment() {
     let user_id = Uuid::new_v4();
-    let binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "viewer",
-        "environment",
-        Some("production"),
-    );
+    let binding =
+        create_role_binding(user_id, Uuid::new_v4(), "viewer", "environment", Some("production"));
 
     // 应该匹配相同环境
-    assert!(scope_matches_helper(
-        &binding,
-        Some("environment"),
-        Some("production")
-    ));
+    assert!(scope_matches_helper(&binding, Some("environment"), Some("production")));
 
     // 不应该匹配不同环境
-    assert!(!scope_matches_helper(
-        &binding,
-        Some("environment"),
-        Some("staging")
-    ));
+    assert!(!scope_matches_helper(&binding, Some("environment"), Some("staging")));
 
     // 不应该匹配不同类型
     assert!(!scope_matches_helper(&binding, Some("group"), Some("production")));
@@ -118,13 +100,8 @@ fn test_scope_matches_environment_no_value() {
 #[test]
 fn test_scope_matches_unknown_type() {
     let user_id = Uuid::new_v4();
-    let binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "custom",
-        "unknown_type",
-        Some("value"),
-    );
+    let binding =
+        create_role_binding(user_id, Uuid::new_v4(), "custom", "unknown_type", Some("value"));
 
     // 未知范围类型不应该匹配任何请求
     assert!(!scope_matches_helper(&binding, Some("unknown_type"), Some("value")));
@@ -151,20 +128,10 @@ fn test_multiple_scope_types() {
     let user_id = Uuid::new_v4();
 
     let global_binding = create_role_binding(user_id, Uuid::new_v4(), "admin", "global", None);
-    let group_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "editor",
-        "group",
-        Some("servers"),
-    );
-    let env_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "viewer",
-        "environment",
-        Some("prod"),
-    );
+    let group_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "editor", "group", Some("servers"));
+    let env_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "viewer", "environment", Some("prod"));
 
     // 验证每个绑定的范围类型
     assert_eq!(global_binding.scope_type, "global");
@@ -182,20 +149,9 @@ fn test_multiple_scope_types() {
 fn test_scope_matches_different_groups() {
     let user_id = Uuid::new_v4();
 
-    let web_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "editor",
-        "group",
-        Some("web"),
-    );
-    let db_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "viewer",
-        "group",
-        Some("database"),
-    );
+    let web_binding = create_role_binding(user_id, Uuid::new_v4(), "editor", "group", Some("web"));
+    let db_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "viewer", "group", Some("database"));
 
     // web 绑定只匹配 web 组
     assert!(scope_matches_helper(&web_binding, Some("group"), Some("web")));
@@ -211,76 +167,31 @@ fn test_scope_matches_different_groups() {
 fn test_scope_matches_different_environments() {
     let user_id = Uuid::new_v4();
 
-    let prod_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "admin",
-        "environment",
-        Some("production"),
-    );
-    let dev_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "editor",
-        "environment",
-        Some("development"),
-    );
-    let staging_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "viewer",
-        "environment",
-        Some("staging"),
-    );
+    let prod_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "admin", "environment", Some("production"));
+    let dev_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "editor", "environment", Some("development"));
+    let staging_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "viewer", "environment", Some("staging"));
 
     // 生产环境绑定
-    assert!(scope_matches_helper(
-        &prod_binding,
-        Some("environment"),
-        Some("production")
-    ));
-    assert!(!scope_matches_helper(
-        &prod_binding,
-        Some("environment"),
-        Some("development")
-    ));
+    assert!(scope_matches_helper(&prod_binding, Some("environment"), Some("production")));
+    assert!(!scope_matches_helper(&prod_binding, Some("environment"), Some("development")));
 
     // 开发环境绑定
-    assert!(scope_matches_helper(
-        &dev_binding,
-        Some("environment"),
-        Some("development")
-    ));
-    assert!(!scope_matches_helper(
-        &dev_binding,
-        Some("environment"),
-        Some("staging")
-    ));
+    assert!(scope_matches_helper(&dev_binding, Some("environment"), Some("development")));
+    assert!(!scope_matches_helper(&dev_binding, Some("environment"), Some("staging")));
 
     // 预发环境绑定
-    assert!(scope_matches_helper(
-        &staging_binding,
-        Some("environment"),
-        Some("staging")
-    ));
-    assert!(!scope_matches_helper(
-        &staging_binding,
-        Some("environment"),
-        Some("production")
-    ));
+    assert!(scope_matches_helper(&staging_binding, Some("environment"), Some("staging")));
+    assert!(!scope_matches_helper(&staging_binding, Some("environment"), Some("production")));
 }
 
 /// 测试空范围值匹配
 #[test]
 fn test_scope_matches_with_empty_required_value() {
     let user_id = Uuid::new_v4();
-    let binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "editor",
-        "group",
-        Some("servers"),
-    );
+    let binding = create_role_binding(user_id, Uuid::new_v4(), "editor", "group", Some("servers"));
 
     // 当请求的值为 None 时应该不匹配
     assert!(!scope_matches_helper(&binding, Some("group"), None));
@@ -294,13 +205,8 @@ fn test_role_binding_names() {
     let admin_binding = create_role_binding(user_id, Uuid::new_v4(), "admin", "global", None);
     let editor_binding =
         create_role_binding(user_id, Uuid::new_v4(), "editor", "group", Some("content"));
-    let viewer_binding = create_role_binding(
-        user_id,
-        Uuid::new_v4(),
-        "viewer",
-        "environment",
-        Some("prod"),
-    );
+    let viewer_binding =
+        create_role_binding(user_id, Uuid::new_v4(), "viewer", "environment", Some("prod"));
 
     assert_eq!(admin_binding.role_name, "admin");
     assert_eq!(editor_binding.role_name, "editor");
@@ -311,13 +217,7 @@ fn test_role_binding_names() {
 #[test]
 fn test_role_binding_created_at() {
     let before = chrono::Utc::now();
-    let binding = create_role_binding(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        "admin",
-        "global",
-        None,
-    );
+    let binding = create_role_binding(Uuid::new_v4(), Uuid::new_v4(), "admin", "global", None);
     let after = chrono::Utc::now();
 
     // 验证创建时间在合理范围内

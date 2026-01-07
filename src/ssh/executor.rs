@@ -153,7 +153,10 @@ mod tests {
             passphrase: Some("pass".to_string()),
         };
         match auth {
-            SSHAuth::Key { private_key, passphrase } => {
+            SSHAuth::Key {
+                private_key,
+                passphrase,
+            } => {
                 assert_eq!(private_key, "test-key");
                 assert_eq!(passphrase, Some("pass".to_string()));
             }

@@ -42,28 +42,28 @@ pub enum ApprovalTrigger {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ApprovalRequest {
     pub id: Uuid,
-    pub job_id: Option<Uuid>,          // 关联的作业ID
-    pub request_type: String,           // 请求类型（job_execution/build_deployment等）
-    pub title: String,                  // 审批标题
-    pub description: Option<String>,    // 审批描述
+    pub job_id: Option<Uuid>,        // 关联的作业ID
+    pub request_type: String,        // 请求类型（job_execution/build_deployment等）
+    pub title: String,               // 审批标题
+    pub description: Option<String>, // 审批描述
 
     // 触发条件
     pub triggers: Json<Vec<ApprovalTrigger>>, // 触发条件列表
 
     // 审批配置
-    pub required_approvers: i32,        // 需要的审批人数
+    pub required_approvers: i32,         // 需要的审批人数
     pub approval_group_id: Option<Uuid>, // 审批组ID（如果使用组审批）
 
     // 状态
     pub status: ApprovalStatus,
-    pub current_approvals: i32,         // 当前已批准数量
+    pub current_approvals: i32, // 当前已批准数量
 
     // 申请信息
-    pub requested_by: Uuid,             // 申请人
+    pub requested_by: Uuid, // 申请人
     pub requested_at: DateTime<Utc>,
 
     // 审批窗口
-    pub timeout_mins: Option<i32>,      // 超时时间（分钟）
+    pub timeout_mins: Option<i32>,         // 超时时间（分钟）
     pub expires_at: Option<DateTime<Utc>>, // 过期时间
 
     // 审计字段
@@ -80,12 +80,12 @@ pub struct ApprovalRequest {
 pub struct ApprovalRecord {
     pub id: Uuid,
     pub approval_request_id: Uuid,
-    pub approver_id: Uuid,              // 审批人ID
-    pub approver_name: String,          // 审批人姓名（冗余，便于查询）
+    pub approver_id: Uuid,     // 审批人ID
+    pub approver_name: String, // 审批人姓名（冗余，便于查询）
 
     // 审批决策
-    pub decision: ApprovalStatus,        // 批准/拒绝
-    pub comment: Option<String>,        // 审批意见
+    pub decision: ApprovalStatus, // 批准/拒绝
+    pub comment: Option<String>,  // 审批意见
 
     // 时间戳
     pub approved_at: DateTime<Utc>,
@@ -102,15 +102,15 @@ pub struct ApprovalGroup {
     pub description: Option<String>,
 
     // 成员配置
-    pub member_ids: Json<Vec<Uuid>>,    // 审批组成员ID列表
-    pub required_approvals: i32,        // 需要的审批数量
+    pub member_ids: Json<Vec<Uuid>>, // 审批组成员ID列表
+    pub required_approvals: i32,     // 需要的审批数量
 
     // 适用范围
-    pub scope: Option<String>,          // 作用域（环境/分组/命令类型等）
-    pub priority: i32,                  // 优先级（数字越大优先级越高）
+    pub scope: Option<String>, // 作用域（环境/分组/命令类型等）
+    pub priority: i32,         // 优先级（数字越大优先级越高）
 
     // 状态
-    pub is_active: bool,                // 是否启用
+    pub is_active: bool, // 是否启用
 
     // 审计字段
     pub created_by: Uuid,
@@ -124,10 +124,10 @@ pub struct JobTemplate {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
-    pub template_type: String,          // 模板类型（command/script/build）
+    pub template_type: String, // 模板类型（command/script/build）
 
     // 模板内容
-    pub template_content: String,       // 模板内容（支持参数化）
+    pub template_content: String, // 模板内容（支持参数化）
     pub parameters_schema: Json<serde_json::Value>, // 参数定义（JSON Schema）
 
     // 默认配置
@@ -136,8 +136,8 @@ pub struct JobTemplate {
     pub default_concurrent_limit: Option<i32>,
 
     // 风险等级
-    pub risk_level: String,             // 风险等级（low/medium/high/critical）
-    pub requires_approval: bool,        // 是否需要审批
+    pub risk_level: String,      // 风险等级（low/medium/high/critical）
+    pub requires_approval: bool, // 是否需要审批
 
     // 适用范围
     pub applicable_environments: Json<Vec<String>>, // 适用环境

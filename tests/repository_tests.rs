@@ -441,10 +441,7 @@ async fn test_asset_repository_create_group() {
         parent_id: None,
     };
 
-    let group = repo
-        .create_group(&req, Uuid::new_v4())
-        .await
-        .unwrap();
+    let group = repo.create_group(&req, Uuid::new_v4()).await.unwrap();
 
     assert_eq!(group.name, "web-servers");
     assert_eq!(group.environment, "production");
@@ -468,10 +465,7 @@ async fn test_asset_repository_create_host() {
         environment: "dev".to_string(),
         parent_id: None,
     };
-    let group = repo
-        .create_group(&group_req, Uuid::new_v4())
-        .await
-        .unwrap();
+    let group = repo.create_group(&group_req, Uuid::new_v4()).await.unwrap();
 
     // 创建主机
     let host_req = CreateHostRequest {
@@ -514,10 +508,7 @@ async fn test_asset_repository_list_hosts() {
         environment: "test".to_string(),
         parent_id: None,
     };
-    let group = repo
-        .create_group(&group_req, Uuid::new_v4())
-        .await
-        .unwrap();
+    let group = repo.create_group(&group_req, Uuid::new_v4()).await.unwrap();
 
     // 创建多个主机
     for i in 1..=3 {

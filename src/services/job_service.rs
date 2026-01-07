@@ -1,17 +1,17 @@
 //! 作业服务层
 //! P2 阶段：提供作业的创建、查询、取消、重试等功能
 
-use std::sync::Arc;
 use sqlx::{Pool, Postgres};
+use std::sync::Arc;
 use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 use crate::concurrency::ConcurrencyController;
 use crate::error::{AppError, Result};
-use crate::models::job::*;
 use crate::models::asset::Host;
-use crate::ssh::{SSHClient, SSHConfig, SSHAuth};
+use crate::models::job::*;
 use crate::services::audit_service::{AuditAction, AuditService};
+use crate::ssh::{SSHAuth, SSHClient, SSHConfig};
 
 /// 作业服务
 pub struct JobService {
@@ -55,7 +55,9 @@ impl JobService {
         }
 
         // 验证目标主机
-        let target_hosts = self.resolve_target_hosts(&request.target_hosts, &request.target_groups).await?;
+        let target_hosts = self
+            .resolve_target_hosts(&request.target_hosts, &request.target_groups)
+            .await?;
         if target_hosts.is_empty() {
             return Err(AppError::validation("No valid target hosts found"));
         }
@@ -83,7 +85,7 @@ impl JobService {
                 $12,
                 $13, $14, $15
             ) RETURNING *
-            "#
+            "#,
         )
         .bind(job_id)
         .bind(JobType::Command)
@@ -114,7 +116,7 @@ impl JobService {
                 INSERT INTO tasks (
                     id, job_id, host_id, status, max_retries
                 ) VALUES ($1, $2, $3, 'pending', $4)
-                "#
+                "#,
             )
             .bind(Uuid::new_v4())
             .bind(job_id)
@@ -135,14 +137,16 @@ impl JobService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            created_by,
-            AuditAction::JobCreate,
-            Some("jobs"),
-            Some(job_id),
-            Some("Command failed"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                created_by,
+                AuditAction::JobCreate,
+                Some("jobs"),
+                Some(job_id),
+                Some("Command failed"),
+                None,
+            )
+            .await?;
 
         info!(job_id = %job_id, "Command job created successfully");
 
@@ -151,7 +155,9 @@ impl JobService {
         let concurrency_clone = self.concurrency_controller.clone();
         let audit_clone = self.audit_service.clone();
         tokio::spawn(async move {
-            if let Err(e) = Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await {
+            if let Err(e) =
+                Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await
+            {
                 error!(error = %e, job_id = %job_id, "Failed to execute job");
             }
         });
@@ -196,7 +202,8 @@ impl JobService {
         }
         if filters.search.is_some() {
             count += 1;
-            query.push_str(&format!(" AND (name ILIKE ${} OR description ILIKE ${})", count, count));
+            query
+                .push_str(&format!(" AND (name ILIKE ${} OR description ILIKE ${})", count, count));
         }
         if filters.date_from.is_some() {
             count += 1;
@@ -246,16 +253,15 @@ impl JobService {
         // 验证作业存在
         self.get_job(job_id).await?;
 
-        let tasks = sqlx::query_as::<_, Task>(
-            "SELECT * FROM tasks WHERE job_id = $1 ORDER BY created_at"
-        )
-        .bind(job_id)
-        .fetch_all(&self.db)
-        .await
-        .map_err(|e| {
-            error!(error = %e, job_id = %job_id, "Failed to fetch tasks");
-            AppError::database("Failed to fetch tasks")
-        })?;
+        let tasks =
+            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE job_id = $1 ORDER BY created_at")
+                .bind(job_id)
+                .fetch_all(&self.db)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, job_id = %job_id, "Failed to fetch tasks");
+                    AppError::database("Failed to fetch tasks")
+                })?;
 
         // 为每个任务获取主机信息
         let mut responses = Vec::new();
@@ -282,7 +288,12 @@ impl JobService {
 
     /// 取消作业
     #[instrument(skip(self))]
-    pub async fn cancel_job(&self, job_id: Uuid, requested_by: Uuid, reason: Option<String>) -> Result<()> {
+    pub async fn cancel_job(
+        &self,
+        job_id: Uuid,
+        requested_by: Uuid,
+        reason: Option<String>,
+    ) -> Result<()> {
         info!(job_id = %job_id, "Cancelling job");
 
         let mut tx = self.db.begin().await.map_err(|e| {
@@ -324,14 +335,16 @@ impl JobService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            requested_by,
-            AuditAction::JobCancel,
-            Some("jobs"),
-            Some(job_id),
-            Some("Command failed"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                requested_by,
+                AuditAction::JobCancel,
+                Some("jobs"),
+                Some(job_id),
+                Some("Command failed"),
+                None,
+            )
+            .await?;
 
         info!(job_id = %job_id, "Job cancelled successfully");
         Ok(())
@@ -339,13 +352,21 @@ impl JobService {
 
     /// 重试作业
     #[instrument(skip(self))]
-    pub async fn retry_job(&self, job_id: Uuid, request: RetryJobRequest, requested_by: Uuid) -> Result<Job> {
+    pub async fn retry_job(
+        &self,
+        job_id: Uuid,
+        request: RetryJobRequest,
+        requested_by: Uuid,
+    ) -> Result<Job> {
         info!(job_id = %job_id, "Retrying job");
 
         let job = self.get_job(job_id).await?;
 
         // 只允许失败、部分成功或已取消的作业重试
-        if !matches!(job.status, JobStatus::Failed | JobStatus::PartiallySucceeded | JobStatus::Cancelled) {
+        if !matches!(
+            job.status,
+            JobStatus::Failed | JobStatus::PartiallySucceeded | JobStatus::Cancelled
+        ) {
             return Err(AppError::validation("Job cannot be retried"));
         }
 
@@ -360,21 +381,19 @@ impl JobService {
 
         let tasks_to_retry = if let Some(ids) = task_ids {
             // 重试指定的任务
-            sqlx::query_as::<_, Task>(
-                "SELECT * FROM tasks WHERE job_id = $1 AND id = ANY($2)"
-            )
-            .bind(job_id)
-            .bind(&ids)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to fetch tasks to retry");
-                AppError::database("Failed to fetch tasks")
-            })?
+            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE job_id = $1 AND id = ANY($2)")
+                .bind(job_id)
+                .bind(&ids)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to fetch tasks to retry");
+                    AppError::database("Failed to fetch tasks")
+                })?
         } else if failed_only {
             // 只重试失败的任务
             sqlx::query_as::<_, Task>(
-                "SELECT * FROM tasks WHERE job_id = $1 AND status IN ('failed', 'timeout')"
+                "SELECT * FROM tasks WHERE job_id = $1 AND status IN ('failed', 'timeout')",
             )
             .bind(job_id)
             .fetch_all(&mut *tx)
@@ -385,16 +404,14 @@ impl JobService {
             })?
         } else {
             // 重试所有任务
-            sqlx::query_as::<_, Task>(
-                "SELECT * FROM tasks WHERE job_id = $1"
-            )
-            .bind(job_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to fetch all tasks");
-                AppError::database("Failed to fetch tasks")
-            })?
+            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE job_id = $1")
+                .bind(job_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to fetch all tasks");
+                    AppError::database("Failed to fetch tasks")
+                })?
         };
 
         if tasks_to_retry.is_empty() {
@@ -433,14 +450,16 @@ impl JobService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            requested_by,
-            AuditAction::JobRetry,
-            Some("jobs"),
-            Some(job_id),
-            Some("Command failed"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                requested_by,
+                AuditAction::JobRetry,
+                Some("jobs"),
+                Some(job_id),
+                Some("Command failed"),
+                None,
+            )
+            .await?;
 
         info!(job_id = %job_id, tasks_count = tasks_to_retry.len(), "Job retry scheduled");
 
@@ -449,7 +468,9 @@ impl JobService {
         let concurrency_clone = self.concurrency_controller.clone();
         let audit_clone = self.audit_service.clone();
         tokio::spawn(async move {
-            if let Err(e) = Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await {
+            if let Err(e) =
+                Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await
+            {
                 error!(error = %e, job_id = %job_id, "Failed to execute job");
             }
         });
@@ -463,7 +484,7 @@ impl JobService {
         let job = self.get_job(job_id).await?;
 
         let pending_tasks = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status = 'pending'"
+            "SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status = 'pending'",
         )
         .bind(job_id)
         .fetch_one(&self.db)
@@ -474,7 +495,7 @@ impl JobService {
         })? as i32;
 
         let running_tasks = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status = 'running'"
+            "SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status = 'running'",
         )
         .bind(job_id)
         .fetch_one(&self.db)
@@ -492,7 +513,7 @@ impl JobService {
 
         // 计算已完成任务的平均时长
         let avg_duration = sqlx::query_scalar::<_, Option<f64>>(
-            "SELECT AVG(duration_secs) FROM tasks WHERE job_id = $1 AND duration_secs IS NOT NULL"
+            "SELECT AVG(duration_secs) FROM tasks WHERE job_id = $1 AND duration_secs IS NOT NULL",
         )
         .bind(job_id)
         .fetch_one(&self.db)
@@ -520,26 +541,28 @@ impl JobService {
 
     /// 通过幂等键查找作业
     async fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Job>> {
-        Ok(
-            sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE idempotency_key = $1")
-                .bind(key)
-                .fetch_optional(&self.db)
-                .await
-                .map_err(|e| {
-                    error!(error = %e, "Failed to fetch job by idempotency key");
-                    AppError::database("Failed to fetch job")
-                })?
-        )
+        Ok(sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE idempotency_key = $1")
+            .bind(key)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "Failed to fetch job by idempotency key");
+                AppError::database("Failed to fetch job")
+            })?)
     }
 
     /// 解析目标主机（直接指定的 + 分组中的）
-    async fn resolve_target_hosts(&self, host_ids: &[Uuid], group_ids: &[Uuid]) -> Result<Vec<Host>> {
+    async fn resolve_target_hosts(
+        &self,
+        host_ids: &[Uuid],
+        group_ids: &[Uuid],
+    ) -> Result<Vec<Host>> {
         let mut hosts = Vec::new();
 
         // 获取直接指定的主机
         if !host_ids.is_empty() {
             let direct_hosts = sqlx::query_as::<_, Host>(
-                "SELECT * FROM hosts WHERE id = ANY($1) AND status = 'active'"
+                "SELECT * FROM hosts WHERE id = ANY($1) AND status = 'active'",
             )
             .bind(host_ids)
             .fetch_all(&self.db)
@@ -603,14 +626,16 @@ impl JobService {
             })?;
 
         // 获取所有待执行的任务
-        let tasks = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE job_id = $1 AND status = 'pending' ORDER BY created_at")
-            .bind(job_id)
-            .fetch_all(&db)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to fetch tasks");
-                AppError::database("Failed to fetch tasks")
-            })?;
+        let tasks = sqlx::query_as::<_, Task>(
+            "SELECT * FROM tasks WHERE job_id = $1 AND status = 'pending' ORDER BY created_at",
+        )
+        .bind(job_id)
+        .fetch_all(&db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to fetch tasks");
+            AppError::database("Failed to fetch tasks")
+        })?;
 
         // 并发执行任务
         let semaphore = if let Some(limit) = job.concurrent_limit {
@@ -650,12 +675,8 @@ impl JobService {
         }
 
         // 更新作业状态
-        let (status, succeeded_tasks, failed_tasks, timeout_tasks) = Self::calculate_job_status(
-            succeeded,
-            failed,
-            timeout,
-            job.total_tasks,
-        );
+        let (status, succeeded_tasks, failed_tasks, timeout_tasks) =
+            Self::calculate_job_status(succeeded, failed, timeout, job.total_tasks);
 
         sqlx::query(
             "UPDATE jobs SET status = $1, succeeded_tasks = $2, failed_tasks = $3, timeout_tasks = $4, completed_at = NOW() WHERE id = $5"
@@ -731,7 +752,10 @@ impl JobService {
         let ssh_config = SSHConfig {
             host: host.address.clone(),
             port: host.port as u16,
-            username: job.execute_user.clone().unwrap_or_else(|| "root".to_string()),
+            username: job
+                .execute_user
+                .clone()
+                .unwrap_or_else(|| "root".to_string()),
             auth: SSHAuth::Password("password".to_string()), // TODO: 从配置或密钥管理获取
             connect_timeout_secs: 10,
             handshake_timeout_secs: 10,
@@ -745,7 +769,11 @@ impl JobService {
         match result {
             Ok(exec_result) => {
                 let (status, failure_reason, failure_message) = if exec_result.timed_out {
-                    (TaskStatus::Timeout, Some(FailureReason::CommandTimeout), Some("Command timed out"))
+                    (
+                        TaskStatus::Timeout,
+                        Some(FailureReason::CommandTimeout),
+                        Some("Command timed out"),
+                    )
                 } else if exec_result.exit_code == 0 {
                     (TaskStatus::Succeeded, None, None)
                 } else {
@@ -841,7 +869,7 @@ impl JobService {
                 $12, $13,
                 true, $14
             ) RETURNING *
-            "#
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(&request.name)
@@ -865,14 +893,16 @@ impl JobService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            created_by,
-            crate::services::audit_service::AuditAction::JobCreate,
-            Some("job_templates"),
-            Some(template.id),
-            Some(&format!("Job template: {}", request.name)),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                created_by,
+                crate::services::audit_service::AuditAction::JobCreate,
+                Some("job_templates"),
+                Some(template.id),
+                Some(&format!("Job template: {}", request.name)),
+                None,
+            )
+            .await?;
 
         info!(template_id = %template.id, "Job template created successfully");
         Ok(template)
@@ -885,7 +915,7 @@ impl JobService {
         template_id: Uuid,
     ) -> Result<crate::models::approval::JobTemplate> {
         sqlx::query_as::<_, crate::models::approval::JobTemplate>(
-            "SELECT * FROM job_templates WHERE id = $1"
+            "SELECT * FROM job_templates WHERE id = $1",
         )
         .bind(template_id)
         .fetch_one(&self.db)
@@ -902,11 +932,9 @@ impl JobService {
 
     /// 查询作业模板列表
     #[instrument(skip(self))]
-    pub async fn list_job_templates(
-        &self,
-    ) -> Result<Vec<crate::models::approval::JobTemplate>> {
+    pub async fn list_job_templates(&self) -> Result<Vec<crate::models::approval::JobTemplate>> {
         sqlx::query_as::<_, crate::models::approval::JobTemplate>(
-            "SELECT * FROM job_templates WHERE is_active = true ORDER BY created_at DESC"
+            "SELECT * FROM job_templates WHERE is_active = true ORDER BY created_at DESC",
         )
         .fetch_all(&self.db)
         .await
@@ -1038,14 +1066,16 @@ impl JobService {
         })?;
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            updated_by,
-            crate::services::audit_service::AuditAction::JobCreate,
-            Some("job_templates"),
-            Some(template_id),
-            Some("Updated job template"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                updated_by,
+                crate::services::audit_service::AuditAction::JobCreate,
+                Some("job_templates"),
+                Some(template_id),
+                Some("Updated job template"),
+                None,
+            )
+            .await?;
 
         info!(template_id = %template_id, "Job template updated successfully");
         Ok(template)
@@ -1057,7 +1087,7 @@ impl JobService {
         info!(template_id = %template_id, "Deleting job template");
 
         let updated = sqlx::query(
-            "UPDATE job_templates SET is_active = false, updated_at = NOW() WHERE id = $1"
+            "UPDATE job_templates SET is_active = false, updated_at = NOW() WHERE id = $1",
         )
         .bind(template_id)
         .execute(&self.db)
@@ -1072,14 +1102,16 @@ impl JobService {
         }
 
         // 记录审计
-        self.audit_service.log_action_simple(
-            deleted_by,
-            crate::services::audit_service::AuditAction::JobCancel,
-            Some("job_templates"),
-            Some(template_id),
-            Some("Deleted job template"),
-            None,
-        ).await?;
+        self.audit_service
+            .log_action_simple(
+                deleted_by,
+                crate::services::audit_service::AuditAction::JobCancel,
+                Some("job_templates"),
+                Some(template_id),
+                Some("Deleted job template"),
+                None,
+            )
+            .await?;
 
         info!(template_id = %template_id, "Job template deleted successfully");
         Ok(())
@@ -1102,7 +1134,8 @@ impl JobService {
         }
 
         // 替换模板参数
-        let command = self.substitute_template_params(&template.template_content, &request.parameters)?;
+        let command =
+            self.substitute_template_params(&template.template_content, &request.parameters)?;
 
         // 构建作业请求
         let job_request = CreateCommandJobRequest {

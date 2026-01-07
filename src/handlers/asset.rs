@@ -84,7 +84,10 @@ pub async fn get_group(
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let group = repo.get_group(id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
+    let group = repo
+        .get_group(id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(group))
 }
@@ -215,7 +218,10 @@ pub async fn get_host(
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let host = repo.get_host(id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
+    let host = repo
+        .get_host(id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(host))
 }

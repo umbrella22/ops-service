@@ -2,8 +2,8 @@
 //! P0 阶段：骨架与基线能力
 
 use ops_system::{
-    concurrency::ConcurrencyController,
-    config::AppConfig, db, handlers::health, middleware::AppState, realtime::EventBus, routes, telemetry,
+    concurrency::ConcurrencyController, config::AppConfig, db, handlers::health,
+    middleware::AppState, realtime::EventBus, routes, telemetry,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -67,13 +67,12 @@ async fn main() -> anyhow::Result<()> {
     // 4. 构建应用状态
     // 注意: 这里的 AppState 只包含基础配置，services 会在 routes.rs 中创建
     let concurrency_controller = std::sync::Arc::new(ConcurrencyController::new(
-        ops_system::concurrency::ConcurrencyConfig::default()
+        ops_system::concurrency::ConcurrencyConfig::default(),
     ));
 
     // 创建审计服务（多个服务共享）
-    let audit_service = std::sync::Arc::new(ops_system::services::AuditService::new(
-        db_pool.clone(),
-    ));
+    let audit_service =
+        std::sync::Arc::new(ops_system::services::AuditService::new(db_pool.clone()));
 
     // 创建事件总线 (P3 实时能力)
     let event_bus = std::sync::Arc::new(EventBus::new(1000));

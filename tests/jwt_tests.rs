@@ -77,7 +77,12 @@ fn test_generate_access_token() {
     let user_id = Uuid::new_v4();
 
     let token = service
-        .generate_access_token(&user_id, "testuser", vec!["admin".to_string()], vec!["read".to_string(), "write".to_string()])
+        .generate_access_token(
+            &user_id,
+            "testuser",
+            vec!["admin".to_string()],
+            vec!["read".to_string(), "write".to_string()],
+        )
         .expect("Token generation should succeed");
 
     // Token 应该是三个部分用点分隔
@@ -165,7 +170,12 @@ fn test_generate_token_pair() {
     let user_id = Uuid::new_v4();
 
     let token_pair = service
-        .generate_token_pair(&user_id, "testuser", vec!["admin".to_string()], vec!["read".to_string()])
+        .generate_token_pair(
+            &user_id,
+            "testuser",
+            vec!["admin".to_string()],
+            vec!["read".to_string()],
+        )
         .expect("Token pair generation should succeed");
 
     // 验证 access token
@@ -207,8 +217,16 @@ fn test_token_with_multiple_roles() {
     let service = JwtService::from_config(&config).unwrap();
     let user_id = Uuid::new_v4();
 
-    let roles = vec!["admin".to_string(), "editor".to_string(), "viewer".to_string()];
-    let scopes = vec!["read".to_string(), "write".to_string(), "delete".to_string()];
+    let roles = vec![
+        "admin".to_string(),
+        "editor".to_string(),
+        "viewer".to_string(),
+    ];
+    let scopes = vec![
+        "read".to_string(),
+        "write".to_string(),
+        "delete".to_string(),
+    ];
 
     let token = service
         .generate_access_token(&user_id, "testuser", roles.clone(), scopes.clone())

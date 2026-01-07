@@ -71,17 +71,13 @@ async fn create_test_app_state() -> Arc<AppState> {
         jwt_service.clone(),
         Arc::new(config.clone()),
     ));
-    let permission_service = Arc::new(ops_system::services::PermissionService::new(
-        pool.clone(),
-    ));
+    let permission_service = Arc::new(ops_system::services::PermissionService::new(pool.clone()));
     let audit_service = Arc::new(ops_system::services::AuditService::new(pool.clone()));
 
     // 创建并发控制器
-    let concurrency_controller = Arc::new(
-        ops_system::concurrency::ConcurrencyController::new(
-            ops_system::concurrency::ConcurrencyConfig::default(),
-        ),
-    );
+    let concurrency_controller = Arc::new(ops_system::concurrency::ConcurrencyController::new(
+        ops_system::concurrency::ConcurrencyConfig::default(),
+    ));
 
     // 创建 job_service
     let job_service = Arc::new(ops_system::services::JobService::new(
@@ -379,8 +375,10 @@ async fn test_login_missing_credentials() {
         .unwrap();
 
     // 应该返回 400 或 422
-    assert!(response.status() == StatusCode::BAD_REQUEST
-        || response.status() == StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        response.status() == StatusCode::BAD_REQUEST
+            || response.status() == StatusCode::UNPROCESSABLE_ENTITY
+    );
 }
 
 #[tokio::test]
@@ -413,8 +411,10 @@ async fn test_login_empty_credentials() {
         .unwrap();
 
     // 应该返回未授权
-    assert!(response.status() == StatusCode::UNAUTHORIZED
-        || response.status() == StatusCode::BAD_REQUEST);
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::BAD_REQUEST
+    );
 }
 
 // ==================== 请求解析测试 ====================

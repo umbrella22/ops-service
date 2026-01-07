@@ -1,9 +1,9 @@
 //! 输出存档与脱敏模块
 //! P2 阶段：提供输出脱敏和存档功能
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
-use once_cell::sync::Lazy;
 
 /// 输出脱敏器
 pub struct OutputSanitizer {
@@ -43,19 +43,26 @@ impl OutputSanitizer {
                 // Token
                 SanitizeRule {
                     name: "token".to_string(),
-                    pattern: Regex::new(r"(?i)(token|access[_-]?token|refresh[_-]?token)[\s=:]+[^\s]+").unwrap(),
+                    pattern: Regex::new(
+                        r"(?i)(token|access[_-]?token|refresh[_-]?token)[\s=:]+[^\s]+",
+                    )
+                    .unwrap(),
                     replacement: "$1=***".to_string(),
                 },
                 // Secret
                 SanitizeRule {
                     name: "secret".to_string(),
-                    pattern: Regex::new(r"(?i)(secret|private[_-]?key|secret[_-]?key)[\s=:]+[^\s]+").unwrap(),
+                    pattern: Regex::new(
+                        r"(?i)(secret|private[_-]?key|secret[_-]?key)[\s=:]+[^\s]+",
+                    )
+                    .unwrap(),
                     replacement: "$1=***".to_string(),
                 },
                 // Email
                 SanitizeRule {
                     name: "email".to_string(),
-                    pattern: Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(),
+                    pattern: Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+                        .unwrap(),
                     replacement: "***@***.***".to_string(),
                 },
                 // 信用卡号
@@ -67,7 +74,8 @@ impl OutputSanitizer {
                 // JWT Token
                 SanitizeRule {
                     name: "jwt".to_string(),
-                    pattern: Regex::new(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+").unwrap(),
+                    pattern: Regex::new(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+                        .unwrap(),
                     replacement: "eyJ***.***.***".to_string(),
                 },
             ],
@@ -84,7 +92,10 @@ impl OutputSanitizer {
         let mut result = output.to_string();
 
         for rule in &self.rules {
-            result = rule.pattern.replace_all(&result, &rule.replacement).to_string();
+            result = rule
+                .pattern
+                .replace_all(&result, &rule.replacement)
+                .to_string();
         }
 
         result
@@ -115,9 +126,8 @@ impl OutputSanitizer {
 }
 
 /// 全局默认脱敏器
-static DEFAULT_SANITIZER: Lazy<Arc<OutputSanitizer>> = Lazy::new(|| {
-    Arc::new(OutputSanitizer::new_default())
-});
+static DEFAULT_SANITIZER: Lazy<Arc<OutputSanitizer>> =
+    Lazy::new(|| Arc::new(OutputSanitizer::new_default()));
 
 /// 获取默认脱敏器
 pub fn default_sanitizer() -> Arc<OutputSanitizer> {

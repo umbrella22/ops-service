@@ -10,12 +10,7 @@ use axum::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    auth::middleware::AuthContext,
-    error::Result,
-    models::job::*,
-    middleware::AppState,
-};
+use crate::{auth::middleware::AuthContext, error::Result, middleware::AppState, models::job::*};
 
 /// 创建命令作业
 pub async fn create_command_job(

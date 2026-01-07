@@ -29,29 +29,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let permission_service = Arc::new(PermissionService::new(state.db.clone()));
     let audit_service = Arc::new(AuditService::new(state.db.clone()));
-    
+
     // 创建并发控制器
-    let concurrency_controller = std::sync::Arc::new(
-        crate::concurrency::ConcurrencyController::new(
-            crate::concurrency::ConcurrencyConfig::default()
-        )
-    );
-    
-    let job_service = Arc::new(JobService::new(
-        state.db.clone(),
-        concurrency_controller,
-        audit_service.clone(),
-    ));
+    let concurrency_controller =
+        std::sync::Arc::new(crate::concurrency::ConcurrencyController::new(
+            crate::concurrency::ConcurrencyConfig::default(),
+        ));
+
+    let job_service =
+        Arc::new(JobService::new(state.db.clone(), concurrency_controller, audit_service.clone()));
 
     // 创建事件总线 (P3 实时能力)
     let event_bus = Arc::new(EventBus::new(1000));
 
     // 创建审批服务 (P3 审批流)
-    let approval_service = Arc::new(ApprovalService::new(
-        state.db.clone(),
-        audit_service.clone(),
-        event_bus.clone(),
-    ));
+    let approval_service =
+        Arc::new(ApprovalService::new(state.db.clone(), audit_service.clone(), event_bus.clone()));
 
     // 创建完整的 AppState
     let full_state = Arc::new(AppState {

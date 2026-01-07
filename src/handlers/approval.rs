@@ -104,9 +104,7 @@ pub async fn get_approval_statistics(
 }
 
 /// 订阅审批事件流（SSE）
-pub async fn subscribe_approval_events(
-    State(state): State<Arc<AppState>>,
-) -> Result<Response> {
+pub async fn subscribe_approval_events(State(state): State<Arc<AppState>>) -> Result<Response> {
     // 创建SSE流
     let stream = state
         .event_bus
@@ -175,9 +173,7 @@ pub async fn get_job_template(
 }
 
 /// 查询作业模板列表
-pub async fn list_job_templates(
-    State(state): State<Arc<AppState>>,
-) -> Result<impl IntoResponse> {
+pub async fn list_job_templates(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
     let templates = state.job_service.list_job_templates().await?;
     Ok(Json(templates))
 }

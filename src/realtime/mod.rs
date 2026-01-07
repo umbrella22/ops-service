@@ -52,67 +52,84 @@ impl RealtimeEvent {
     /// 转换为SSE格式的数据
     pub fn to_sse_data(&self) -> String {
         match self {
-            RealtimeEvent::JobStatusChanged { job_id, old_status, new_status } => {
-                serde_json::json!({
-                    "type": "job_status_changed",
-                    "data": {
-                        "job_id": job_id,
-                        "old_status": old_status,
-                        "new_status": new_status,
-                    }
-                }).to_string()
-            }
-            RealtimeEvent::TaskStatusChanged { task_id, job_id, old_status, new_status } => {
-                serde_json::json!({
-                    "type": "task_status_changed",
-                    "data": {
-                        "task_id": task_id,
-                        "job_id": job_id,
-                        "old_status": old_status,
-                        "new_status": new_status,
-                    }
-                }).to_string()
-            }
-            RealtimeEvent::TaskOutputUpdate { task_id, job_id, output, is_complete } => {
-                serde_json::json!({
-                    "type": "task_output_update",
-                    "data": {
-                        "task_id": task_id,
-                        "job_id": job_id,
-                        "output": output,
-                        "is_complete": is_complete,
-                    }
-                }).to_string()
-            }
-            RealtimeEvent::ApprovalStatusChanged { approval_id, old_status, new_status } => {
-                serde_json::json!({
-                    "type": "approval_status_changed",
-                    "data": {
-                        "approval_id": approval_id,
-                        "old_status": old_status,
-                        "new_status": new_status,
-                    }
-                }).to_string()
-            }
-            RealtimeEvent::NewApprovalRequest { approval_id, job_id, title, requested_by } => {
-                serde_json::json!({
-                    "type": "new_approval_request",
-                    "data": {
-                        "approval_id": approval_id,
-                        "job_id": job_id,
-                        "title": title,
-                        "requested_by": requested_by,
-                    }
-                }).to_string()
-            }
-            RealtimeEvent::Heartbeat => {
-                serde_json::json!({
-                    "type": "heartbeat",
-                    "data": {
-                        "timestamp": chrono::Utc::now().to_rfc3339()
-                    }
-                }).to_string()
-            }
+            RealtimeEvent::JobStatusChanged {
+                job_id,
+                old_status,
+                new_status,
+            } => serde_json::json!({
+                "type": "job_status_changed",
+                "data": {
+                    "job_id": job_id,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::TaskStatusChanged {
+                task_id,
+                job_id,
+                old_status,
+                new_status,
+            } => serde_json::json!({
+                "type": "task_status_changed",
+                "data": {
+                    "task_id": task_id,
+                    "job_id": job_id,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::TaskOutputUpdate {
+                task_id,
+                job_id,
+                output,
+                is_complete,
+            } => serde_json::json!({
+                "type": "task_output_update",
+                "data": {
+                    "task_id": task_id,
+                    "job_id": job_id,
+                    "output": output,
+                    "is_complete": is_complete,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::ApprovalStatusChanged {
+                approval_id,
+                old_status,
+                new_status,
+            } => serde_json::json!({
+                "type": "approval_status_changed",
+                "data": {
+                    "approval_id": approval_id,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::NewApprovalRequest {
+                approval_id,
+                job_id,
+                title,
+                requested_by,
+            } => serde_json::json!({
+                "type": "new_approval_request",
+                "data": {
+                    "approval_id": approval_id,
+                    "job_id": job_id,
+                    "title": title,
+                    "requested_by": requested_by,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::Heartbeat => serde_json::json!({
+                "type": "heartbeat",
+                "data": {
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }
+            })
+            .to_string(),
         }
     }
 
@@ -145,9 +162,9 @@ impl EventBus {
 
     /// 发布事件
     pub fn publish(&self, event: RealtimeEvent) -> Result<()> {
-        self.sender.send(event).map_err(|e| {
-            AppError::internal_error(&format!("Failed to publish event: {}", e))
-        })?;
+        self.sender
+            .send(event)
+            .map_err(|e| AppError::internal_error(&format!("Failed to publish event: {}", e)))?;
         Ok(())
     }
 
@@ -188,7 +205,11 @@ impl JobEventStream {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                if heartbeat_tx.send(Ok(RealtimeEvent::Heartbeat.to_sse_data())).await.is_err() {
+                if heartbeat_tx
+                    .send(Ok(RealtimeEvent::Heartbeat.to_sse_data()))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -207,7 +228,8 @@ impl JobEventStream {
                 };
 
                 if should_send {
-                    let sse_data = format!("event: {}\ndata: {}\n\n", event.event_type(), event.to_sse_data());
+                    let sse_data =
+                        format!("event: {}\ndata: {}\n\n", event.event_type(), event.to_sse_data());
                     if tx.send(Ok(sse_data)).await.is_err() {
                         break;
                     }
@@ -241,7 +263,11 @@ impl ApprovalEventStream {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                if heartbeat_tx.send(Ok(RealtimeEvent::Heartbeat.to_sse_data())).await.is_err() {
+                if heartbeat_tx
+                    .send(Ok(RealtimeEvent::Heartbeat.to_sse_data()))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -259,7 +285,8 @@ impl ApprovalEventStream {
                 );
 
                 if should_send {
-                    let sse_data = format!("event: {}\ndata: {}\n\n", event.event_type(), event.to_sse_data());
+                    let sse_data =
+                        format!("event: {}\ndata: {}\n\n", event.event_type(), event.to_sse_data());
                     if tx.send(Ok(sse_data)).await.is_err() {
                         break;
                     }
@@ -354,7 +381,8 @@ impl DataMasker {
         }
 
         // 脱敏邮箱
-        let email_re = regex::Regex::new(r"[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})").unwrap();
+        let email_re =
+            regex::Regex::new(r"[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})").unwrap();
         masked = email_re.replace_all(&masked, "***@$1").to_string();
 
         // 脱敏IP地址（可选，取决于安全策略）
