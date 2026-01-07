@@ -2,7 +2,7 @@
 //!
 //! 测试权限检查和范围匹配逻辑
 
-use ops_system::models::role::RoleBinding;
+use ops_service::models::role::RoleBinding;
 use uuid::Uuid;
 
 /// 创建测试用的角色绑定

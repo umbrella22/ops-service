@@ -36,8 +36,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             crate::concurrency::ConcurrencyConfig::default(),
         ));
 
-    let job_service =
-        Arc::new(JobService::new(state.db.clone(), concurrency_controller, audit_service.clone()));
+    let job_service = Arc::new(JobService::new(
+        state.db.clone(),
+        concurrency_controller,
+        audit_service.clone(),
+        state.config.ssh.clone(),
+    ));
 
     // 创建事件总线 (P3 实时能力)
     let event_bus = Arc::new(EventBus::new(1000));

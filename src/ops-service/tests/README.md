@@ -164,10 +164,10 @@ cargo test --test password_tests \
 sudo systemctl start postgresql
 
 # 2. 创建测试数据库
-createdb ops_system_test
+createdb ops_service_test
 
 # 3. 设置环境变量 (可选，有默认值)
-export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ops_system_test"
+export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ops_service_test"
 
 # 4. 运行仓库层测试
 cargo test --test repository_tests
@@ -300,7 +300,7 @@ sudo systemctl start postgresql
 
 创建测试数据库:
 ```bash
-createdb ops_system_test
+createdb ops_service_test
 ```
 
 ### 编译错误

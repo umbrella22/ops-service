@@ -2,7 +2,7 @@
 //!
 //! 测试审计日志记录和查询功能
 
-use ops_system::services::audit_service::{AuditAction, AuditLogParams};
+use ops_service::services::audit_service::{AuditAction, AuditLogParams};
 use uuid::Uuid;
 
 #[test]

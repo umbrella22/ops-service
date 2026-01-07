@@ -459,7 +459,7 @@ LIMIT 10;
 ./scripts/migrate.sh backup
 
 # 或手动备份
-pg_dump -U postgres -d ops_system -F c -f backup.dump
+pg_dump -U postgres -d ops_service -F c -f backup.dump
 ```
 
 ### 数据库恢复
@@ -469,7 +469,7 @@ pg_dump -U postgres -d ops_system -F c -f backup.dump
 ./scripts/migrate.sh restore backup.dump
 
 # 或手动恢复
-pg_restore -U postgres -d ops_system backup.dump
+pg_restore -U postgres -d ops_service backup.dump
 ```
 
 ### 清理旧数据

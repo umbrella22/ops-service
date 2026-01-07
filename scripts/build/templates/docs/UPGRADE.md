@@ -48,7 +48,7 @@ sudo cp -r /etc/{{BINARY_NAME}} /tmp/{{BINARY_NAME}}-config-backup
 sudo cp -r /var/lib/{{BINARY_NAME}} /tmp/{{BINARY_NAME}}-data-backup
 
 # 3. Backup database
-sudo -u postgres pg_dump ops_system > /tmp/{{BINARY_NAME}}-db-backup.sql
+sudo -u postgres pg_dump ops_service > /tmp/{{BINARY_NAME}}-db-backup.sql
 
 # 4. Note current version
 cat /var/lib/{{BINARY_NAME}}/VERSION
@@ -228,7 +228,7 @@ sudo chmod +x /usr/local/bin/{{BINARY_NAME}}
 sudo cp -r /tmp/{{BINARY_NAME}}-config-backup/* /etc/{{BINARY_NAME}}/
 
 # 4. Restore database (if needed)
-sudo -u postgres psql ops_system < /tmp/{{BINARY_NAME}}-db-backup.sql
+sudo -u postgres psql ops_service < /tmp/{{BINARY_NAME}}-db-backup.sql
 
 # 5. Restart service
 sudo systemctl start {{BINARY_NAME}}

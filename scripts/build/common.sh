@@ -35,17 +35,17 @@ print_section() {
 
 # Get version from Cargo.toml
 get_version() {
-    grep '^version = ' "$PROJECT_ROOT/Cargo.toml" | head -1 | awk -F'"' '{print $2}'
+    grep '^version = ' "$PROJECT_ROOT/src/ops-service/Cargo.toml" | head -1 | awk -F'"' '{print $2}'
 }
 
-# Get project root directory
+# Get project root directory (workspace root)
 get_project_root() {
     cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
 }
 
-# Get binary name from Cargo.toml
+# Get binary name from ops-service Cargo.toml
 get_binary_name() {
-    grep '^name = ' "$PROJECT_ROOT/Cargo.toml" | head -1 | awk -F'"' '{print $2}'
+    grep '^name = ' "$PROJECT_ROOT/src/ops-service/Cargo.toml" | head -1 | awk -F'"' '{print $2}'
 }
 
 # Get target triple for platform
@@ -136,7 +136,7 @@ verify_checksum() {
 # Make file executable
 make_executable() {
     local file=$1
-    chmod +x "$file"
+    chmod 755 "$file"
     log_info "Made executable: $file"
 }
 
@@ -231,6 +231,9 @@ VERSION=$(get_version)
 
 export BINARY_NAME
 BINARY_NAME=$(get_binary_name)
+
+export RUNNER_BINARY_NAME
+RUNNER_BINARY_NAME="ops-runner"
 
 export TIMESTAMP
 TIMESTAMP=$(get_timestamp)

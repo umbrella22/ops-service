@@ -3,7 +3,7 @@
 //! 测试应用错误类型的各种行为
 
 use axum::http::StatusCode;
-use ops_system::error::{AppError, ErrorResponse};
+use ops_service::error::{AppError, ErrorResponse};
 use serde_json;
 
 // ==================== 错误状态码测试 ====================
@@ -228,7 +228,7 @@ fn test_from_config_error() {
 #[test]
 fn test_error_response_serialization() {
     let error_response = ErrorResponse {
-        error: ops_system::error::ErrorDetail {
+        error: ops_service::error::ErrorDetail {
             code: 404,
             message: "Resource not found".to_string(),
             request_id: "req-123".to_string(),
@@ -246,7 +246,7 @@ fn test_error_response_serialization() {
 #[test]
 fn test_error_response_structure() {
     let error_response = ErrorResponse {
-        error: ops_system::error::ErrorDetail {
+        error: ops_service::error::ErrorDetail {
             code: 400,
             message: "Bad request".to_string(),
             request_id: "abc-123".to_string(),
@@ -385,7 +385,7 @@ fn test_error_code_consistency() {
 
 #[test]
 fn test_error_result_type() {
-    type TestResult = ops_system::error::Result<String>;
+    type TestResult = ops_service::error::Result<String>;
 
     let ok_result: TestResult = Ok("success".to_string());
     assert!(ok_result.is_ok());

@@ -66,11 +66,30 @@ pub struct SecurityConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SshConfig {
+    /// 默认 SSH 用户名
+    pub default_username: String,
+    /// 默认 SSH 密码（使用 Secret 包装，防止日志泄露）
+    pub default_password: Secret<String>,
+    /// 默认 SSH 私钥（可选，使用 Secret 包装）
+    pub default_private_key: Option<Secret<String>>,
+    /// 私钥密码（可选，使用 Secret 包装）
+    pub private_key_passphrase: Option<Secret<String>>,
+    /// 连接超时（秒）
+    pub connect_timeout_secs: u64,
+    /// 握手超时（秒）
+    pub handshake_timeout_secs: u64,
+    /// 命令执行默认超时（秒）
+    pub command_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub logging: LoggingConfig,
     pub security: SecurityConfig,
+    pub ssh: SshConfig,
 }
 
 impl AppConfig {
@@ -99,7 +118,13 @@ impl AppConfig {
             .set_default("security.max_login_attempts", 5)?
             .set_default("security.login_lockout_duration_secs", 1800)?
             .set_default("security.rate_limit_rps", 100)?
-            .set_default("security.trust_proxy", true)?;
+            .set_default("security.trust_proxy", true)?
+            // SSH 默认配置
+            .set_default("ssh.default_username", "root")?
+            .set_default("ssh.default_password", "")?
+            .set_default("ssh.connect_timeout_secs", 10)?
+            .set_default("ssh.handshake_timeout_secs", 10)?
+            .set_default("ssh.command_timeout_secs", 300)?;
 
         // 从环境变量加载配置（前缀为 OPS_）
         settings = settings.add_source(

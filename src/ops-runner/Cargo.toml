@@ -1,0 +1,9 @@
+[package]
+name = "ops-runner"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+anyhow = "1.0"
+common = { path = "../common" }

@@ -142,9 +142,9 @@ sudo systemctl enable postgresql
 
 # 3. 创建数据库
 sudo -u postgres psql
-CREATE DATABASE ops_system;
+CREATE DATABASE ops_service;
 CREATE USER ops_user WITH ENCRYPTED PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE ops_system TO ops_user;
+GRANT ALL PRIVILEGES ON DATABASE ops_service TO ops_user;
 \q
 
 # 4. 解压并安装
@@ -156,7 +156,7 @@ sudo ./scripts/install.sh --native
 
 # 6. 编辑配置文件
 sudo nano /etc/{{BINARY_NAME}}/env
-# 设置数据库 URL: OPS_DATABASE__URL=postgresql://ops_user:your_password@127.0.0.1:5432/ops_system
+# 设置数据库 URL: OPS_DATABASE__URL=postgresql://ops_user:your_password@127.0.0.1:5432/ops_service
 
 # 7. 启动服务
 sudo ./scripts/start.sh
@@ -170,7 +170,7 @@ sudo ./scripts/start.sh
 
 ```bash
 # PostgreSQL 配置
-POSTGRES_DB=ops_system
+POSTGRES_DB=ops_service
 POSTGRES_USER=ops_user
 POSTGRES_PASSWORD=<自动生成的随机密码>
 
@@ -194,7 +194,7 @@ docker-compose restart
 
 ```bash
 # 数据库配置 (注意: 使用双下划线 __ 表示嵌套字段)
-OPS_DATABASE__URL=postgresql://user:password@127.0.0.1:5432/ops_system
+OPS_DATABASE__URL=postgresql://user:password@127.0.0.1:5432/ops_service
 OPS_DATABASE__MAX_CONNECTIONS=10
 OPS_DATABASE__MIN_CONNECTIONS=2
 
@@ -337,10 +337,10 @@ sudo systemctl status {{BINARY_NAME}}
 3. **检查数据库连接:**
    ```bash
    # Docker 模式
-   docker exec -it <postgres_container> psql -U ops_user -d ops_system
+   docker exec -it <postgres_container> psql -U ops_user -d ops_service
 
    # Native 模式
-   psql "postgresql://user:pass@127.0.0.1:5432/ops_system"
+   psql "postgresql://user:pass@127.0.0.1:5432/ops_service"
    ```
 
 ### 权限问题
@@ -440,7 +440,7 @@ sudo ./scripts/uninstall.sh
 
 ```bash
 sudo -u postgres psql
-DROP DATABASE ops_system;
+DROP DATABASE ops_service;
 DROP USER ops_user;
 \q
 ```

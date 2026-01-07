@@ -74,6 +74,7 @@ check_file "$BUILD_DIR/CHECKSUM" "" "CHECKSUM file"
 echo ""
 log_info "Checking binary..."
 check_file "$BUILD_DIR/bin/$BINARY_NAME" "755" "Binary executable"
+check_file "$BUILD_DIR/bin/ops-runner" "755" "Runner executable"
 
 # Test binary execution
 if [ -x "$BUILD_DIR/bin/$BINARY_NAME" ]; then
@@ -83,6 +84,15 @@ if [ -x "$BUILD_DIR/bin/$BINARY_NAME" ]; then
         log_success "Binary executes: $VERSION_OUTPUT"
     else
         log_warn "Binary doesn't support --version (this is okay)"
+    fi
+fi
+if [ -x "$BUILD_DIR/bin/ops-runner" ]; then
+    log_info "Testing runner execution..."
+    if "$BUILD_DIR/bin/ops-runner" --version >/dev/null 2>&1; then
+        VERSION_OUTPUT=$("$BUILD_DIR/bin/ops-runner" --version 2>&1 || true)
+        log_success "Runner executes: $VERSION_OUTPUT"
+    else
+        log_warn "Runner doesn't support --version (this is okay)"
     fi
 fi
 
@@ -121,6 +131,7 @@ done
 echo ""
 log_info "Checking systemd service..."
 check_file "$BUILD_DIR/systemd/$BINARY_NAME.service" "644" "Systemd service file"
+check_file "$BUILD_DIR/systemd/ops-runner.service" "644" "Runner systemd service file"
 
 # Check Docker files
 echo ""

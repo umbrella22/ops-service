@@ -219,6 +219,15 @@ mod tests {
                 max_login_attempts: 5,
                 login_lockout_duration_secs: 1800,
             },
+            ssh: crate::config::SshConfig {
+                default_username: "root".to_string(),
+                default_password: Secret::new("".to_string()),
+                default_private_key: None,
+                private_key_passphrase: None,
+                connect_timeout_secs: 10,
+                handshake_timeout_secs: 10,
+                command_timeout_secs: 300,
+            },
         }
     }
 

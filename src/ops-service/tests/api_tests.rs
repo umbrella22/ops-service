@@ -7,10 +7,12 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ops_system::config::{AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig};
-use ops_system::db;
-use ops_system::handlers::health::health_check;
-use ops_system::middleware::AppState;
+use ops_service::config::{
+    AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig, SshConfig,
+};
+use ops_service::db;
+use ops_service::handlers::health::health_check;
+use ops_service::middleware::AppState;
 use secrecy::Secret;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -18,7 +20,7 @@ use tower::ServiceExt;
 /// 创建测试配置
 fn create_test_config() -> AppConfig {
     let database_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:postgres@localhost:5432/ops_system_test".to_string()
+        "postgresql://postgres:postgres@localhost:5432/ops_service_test".to_string()
     });
 
     AppConfig {
@@ -52,6 +54,15 @@ fn create_test_config() -> AppConfig {
             trust_proxy: false,
             allowed_ips: None,
         },
+        ssh: SshConfig {
+            default_username: "root".to_string(),
+            default_password: Secret::new("".to_string()),
+            default_private_key: None,
+            private_key_passphrase: None,
+            connect_timeout_secs: 10,
+            handshake_timeout_secs: 10,
+            command_timeout_secs: 300,
+        },
     }
 }
 
@@ -63,34 +74,35 @@ async fn create_test_app_state() -> Arc<AppState> {
         .expect("Failed to create test database pool");
 
     let jwt_service = Arc::new(
-        ops_system::auth::jwt::JwtService::from_config(&config)
+        ops_service::auth::jwt::JwtService::from_config(&config)
             .expect("Failed to create JWT service"),
     );
-    let auth_service = Arc::new(ops_system::services::AuthService::new(
+    let auth_service = Arc::new(ops_service::services::AuthService::new(
         pool.clone(),
         jwt_service.clone(),
         Arc::new(config.clone()),
     ));
-    let permission_service = Arc::new(ops_system::services::PermissionService::new(pool.clone()));
-    let audit_service = Arc::new(ops_system::services::AuditService::new(pool.clone()));
+    let permission_service = Arc::new(ops_service::services::PermissionService::new(pool.clone()));
+    let audit_service = Arc::new(ops_service::services::AuditService::new(pool.clone()));
 
     // 创建并发控制器
-    let concurrency_controller = Arc::new(ops_system::concurrency::ConcurrencyController::new(
-        ops_system::concurrency::ConcurrencyConfig::default(),
+    let concurrency_controller = Arc::new(ops_service::concurrency::ConcurrencyController::new(
+        ops_service::concurrency::ConcurrencyConfig::default(),
     ));
 
     // 创建 job_service
-    let job_service = Arc::new(ops_system::services::JobService::new(
+    let job_service = Arc::new(ops_service::services::JobService::new(
         pool.clone(),
         concurrency_controller,
         audit_service.clone(),
+        config.ssh.clone(),
     ));
 
     // 创建 event_bus
-    let event_bus = Arc::new(ops_system::realtime::EventBus::new(100));
+    let event_bus = Arc::new(ops_service::realtime::EventBus::new(100));
 
     // 创建 approval_service
-    let approval_service = Arc::new(ops_system::services::ApprovalService::new(
+    let approval_service = Arc::new(ops_service::services::ApprovalService::new(
         pool.clone(),
         audit_service.clone(),
         event_bus.clone(),
@@ -349,7 +361,7 @@ async fn test_response_headers() {
 #[tokio::test]
 #[ignore = "需要数据库连接"]
 async fn test_login_missing_credentials() {
-    use ops_system::handlers::auth::login;
+    use ops_service::handlers::auth::login;
 
     let state = create_test_app_state().await;
 
@@ -384,7 +396,7 @@ async fn test_login_missing_credentials() {
 #[tokio::test]
 #[ignore = "需要数据库连接"]
 async fn test_login_empty_credentials() {
-    use ops_system::handlers::auth::login;
+    use ops_service::handlers::auth::login;
 
     let state = create_test_app_state().await;
 

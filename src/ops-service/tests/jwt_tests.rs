@@ -2,8 +2,10 @@
 //!
 //! 测试 JWT token 生成、验证和刷新功能
 
-use ops_system::auth::jwt::JwtService;
-use ops_system::config::{AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig};
+use ops_service::auth::jwt::JwtService;
+use ops_service::config::{
+    AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig, SshConfig,
+};
 use secrecy::Secret;
 use uuid::Uuid;
 
@@ -39,6 +41,15 @@ fn create_test_config() -> AppConfig {
             password_require_special: false,
             max_login_attempts: 5,
             login_lockout_duration_secs: 1800,
+        },
+        ssh: SshConfig {
+            default_username: "root".to_string(),
+            default_password: Secret::new("".to_string()),
+            default_private_key: None,
+            private_key_passphrase: None,
+            connect_timeout_secs: 10,
+            handshake_timeout_secs: 10,
+            command_timeout_secs: 300,
         },
     }
 }

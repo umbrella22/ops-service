@@ -442,10 +442,10 @@ sudo chmod 755 /var/log/{{BINARY_NAME}}
 ### "Database locked" or "Database is locked"
 ```bash
 # Check for other connections
-psql -c "SELECT * FROM pg_stat_activity WHERE datname='ops_system';"
+psql -c "SELECT * FROM pg_stat_activity WHERE datname='ops_service';"
 
 # Terminate stale connections
-psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='ops_system' AND pid <> pg_backend_pid();"
+psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='ops_service' AND pid <> pg_backend_pid();"
 ```
 
 ### "Out of memory"
@@ -510,7 +510,7 @@ sudo systemctl is-active {{BINARY_NAME}}
 df -h /var/lib/{{BINARY_NAME}}
 
 # Check database size
-sudo -u postgres psql -c "SELECT pg_size_pretty(pg_database_size('ops_system'));"
+sudo -u postgres psql -c "SELECT pg_size_pretty(pg_database_size('ops_service'));"
 
 # Check log size
 du -sh /var/log/{{BINARY_NAME}}

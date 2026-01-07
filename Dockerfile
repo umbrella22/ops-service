@@ -10,25 +10,21 @@ RUN apt-get update && apt-get install -y \
 # 设置工作目录
 WORKDIR /build
 
-# 复制 Cargo 配置
+# 复制 workspace 配置
 COPY Cargo.toml Cargo.lock ./
+COPY src/common/Cargo.toml src/common/Cargo.toml
+COPY src/ops-service/Cargo.toml src/ops-service/Cargo.toml
+COPY src/ops-runner/Cargo.toml src/ops-runner/Cargo.toml
 
-# 创建虚拟 src 目录（利用 Docker 缓存层）
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "" > src/lib.rs
+# 预拉取依赖（缓存层）
+RUN cargo fetch
 
-# 构建依赖（缓存层）
-RUN cargo build --release && \
-    rm -rf src
-
-# 复制实际源代码
+# 复制实际源代码与迁移
 COPY src ./src
 COPY migrations ./migrations
 
-# 构建应用
-RUN touch src/main.rs && \
-    cargo build --release
+# 构建应用（仅 ops-service）
+RUN cargo build --release -p ops-service --bin ops-service
 
 # ========== 运行阶段 ==========
 FROM debian:bookworm-slim AS runtime
@@ -52,7 +48,7 @@ RUN mkdir -p /app/migrations && \
 WORKDIR /app
 
 # 从构建阶段复制二进制文件和迁移脚本
-COPY --from=builder /build/target/release/ops-system /app/
+COPY --from=builder /build/target/release/ops-service /app/ops-service
 COPY --from=builder /build/migrations /app/migrations/
 
 # 切换到非 root 用户
@@ -66,4 +62,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 EXPOSE 3000
 
 # 启动应用
-ENTRYPOINT ["/app/ops-system"]
+ENTRYPOINT ["/app/ops-service"]

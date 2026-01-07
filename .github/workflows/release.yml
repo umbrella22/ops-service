@@ -85,7 +85,7 @@ jobs:
     - name: Run quick tests before build
       run: |
         echo "Running quick sanity checks..."
-        cargo test --lib --no-fail-fast
+        cargo test --workspace --no-fail-fast
       continue-on-error: false
 
     - name: Build package
@@ -97,11 +97,11 @@ jobs:
     - name: Upload x86_64 package
       uses: actions/upload-artifact@v4
       with:
-        name: ops-system-linux-x86_64
+        name: ops-linux-x86_64
         path: |
           build/linux-x86_64/
-          build/dist/ops-system-*.tar.gz
-          build/dist/ops-system-*.sha256
+          build/dist/ops-service-*.tar.gz
+          build/dist/ops-service-*.sha256
         retention-days: 30
 
   build-arm64:
@@ -150,11 +150,11 @@ jobs:
     - name: Upload ARM64 package
       uses: actions/upload-artifact@v4
       with:
-        name: ops-system-linux-arm64
+        name: ops-linux-arm64
         path: |
           build/linux-arm64/
-          build/dist/ops-system-*-linux-arm64.tar.gz
-          build/dist/ops-system-*-linux-arm64.sha256
+          build/dist/ops-service-*-linux-arm64.tar.gz
+          build/dist/ops-service-*-linux-arm64.sha256
         retention-days: 30
 
   create-release:
@@ -174,13 +174,13 @@ jobs:
     - name: Download x86_64 artifacts
       uses: actions/download-artifact@v4
       with:
-        name: ops-system-linux-x86_64
+        name: ops-linux-x86_64
         path: artifacts/x86_64
 
     - name: Download ARM64 artifacts
       uses: actions/download-artifact@v4
       with:
-        name: ops-system-linux-arm64
+        name: ops-linux-arm64
         path: artifacts/arm64
 
     - name: Prepare release assets
@@ -205,20 +205,20 @@ jobs:
         fi
 
         # 获取 SHA256 校验和
-        SHA256_X86_64=$(cat release/ops-system-*-linux-x86_64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "N/A")
-        SHA256_ARM64=$(cat release/ops-system-*-linux-arm64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "N/A")
+        SHA256_X86_64=$(cat release/ops-service-*-linux-x86_64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "N/A")
+        SHA256_ARM64=$(cat release/ops-service-*-linux-arm64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "N/A")
 
         cat > release_notes.md << EOF
-        ## OPS System v${VERSION}
+        ## OPS v${VERSION}
 
         ### Downloads
 
         **Linux x86_64**
-        - \`ops-system-${VERSION}-linux-x86_64.tar.gz\`
+        - \`ops-service-${VERSION}-linux-x86_64.tar.gz\`
         - SHA256: \`${SHA256_X86_64}\`
 
         **Linux ARM64**
-        - \`ops-system-${VERSION}-linux-arm64.tar.gz\`
+        - \`ops-service-${VERSION}-linux-arm64.tar.gz\`
         - SHA256: \`${SHA256_ARM64}\`
 
         ### Installation

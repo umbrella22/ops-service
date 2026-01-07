@@ -116,7 +116,7 @@ sudo ./check-db.sh
 #### ✅ 正确格式:
 ```bash
 # 数据库配置 (注意双下划线 __)
-OPS_DATABASE__URL=postgresql://postgres:password@localhost:5432/ops_system
+OPS_DATABASE__URL=postgresql://postgres:password@localhost:5432/ops_service
 OPS_DATABASE__MAX_CONNECTIONS=10
 OPS_DATABASE__MIN_CONNECTIONS=2
 

@@ -83,7 +83,7 @@ docker-compose up -d
 docker-compose logs api | grep migration
 
 # 查看数据库
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 ```
 
 **优势**：
@@ -122,7 +122,7 @@ docker-compose exec postgres psql -U ops_user -d ops_system
 cargo install sqlx-cli --no-default-features --features rustls,postgres
 
 # 设置数据库 URL
-export DATABASE_URL="postgresql://postgres:password@localhost:5432/ops_system"
+export DATABASE_URL="postgresql://postgres:password@localhost:5432/ops_service"
 
 # 运行迁移
 sqlx migrate run --source migrations
@@ -135,7 +135,7 @@ sqlx migrate info --database-url $DATABASE_URL
 
 ```bash
 # 连接到数据库
-psql -U postgres -d ops_system
+psql -U postgres -d ops_service
 
 # 按顺序执行迁移文件
 \i migrations/000001_init_baseline.sql
@@ -147,7 +147,7 @@ psql -U postgres -d ops_system
 
 ```bash
 # 设置环境变量
-export OPS_DATABASE__URL="postgresql://user:pass@localhost:5432/ops_system"
+export OPS_DATABASE__URL="postgresql://user:pass@localhost:5432/ops_service"
 
 # 启动应用（自动运行未执行的迁移）
 ./ops-system
@@ -284,10 +284,10 @@ ON audit_logs(subject_id, occurred_at DESC);
 
 ```bash
 # 备份数据库
-pg_dump -U postgres -d ops_system -F c -f backup_$(date +%Y%m%d).dump
+pg_dump -U postgres -d ops_service -F c -f backup_$(date +%Y%m%d).dump
 
 # 恢复数据库
-pg_restore -U postgres -d ops_system backup.dump
+pg_restore -U postgres -d ops_service backup.dump
 ```
 
 ### 6. 性能监控
@@ -324,7 +324,7 @@ ORDER BY idx_scan ASC;
 
 ```bash
 # 删除所有表
-psql -U postgres -d ops_system -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+psql -U postgres -d ops_service -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 # 重新运行迁移
 sqlx migrate run --database-url $DATABASE_URL

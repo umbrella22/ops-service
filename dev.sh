@@ -105,7 +105,7 @@ view_logs() {
 
 # 进入数据库 shell
 db_shell() {
-    docker exec -it ops-postgres-dev psql -U ops_user -d ops_system
+    docker exec -it ops-postgres-dev psql -U ops_user -d ops_service
 }
 
 # 显示帮助信息

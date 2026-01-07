@@ -25,28 +25,28 @@ help:
 
 fmt:
 	@echo "🎨 格式化代码..."
-	@cargo fmt
+	@cargo fmt --all
 
 clippy:
 	@echo "🔍 运行 Clippy 检查..."
-	@cargo clippy -- -D warnings
+	@cargo clippy --workspace -- -D warnings
 
 build:
 	@echo "🔨 构建项目..."
-	@cargo build --release
+	@cargo build --release --workspace
 
 ci: fmt clippy
 	@echo "✅ CI 检查完成!"
 
 docker-up:
 	@echo "🐳 启动 Docker 环境..."
-	@docker compose -f docker-compose.test.yml up -d
+	@docker compose -f docker-compose.dev.yml up -d
 	@echo "✓ Docker 环境已启动"
-	@echo "数据库: postgresql://postgres:postgres@localhost:5432/ops_system_test"
+	@echo "数据库: 请查看 docker-compose.dev.yml"
 
 docker-down:
 	@echo "🐳 停止 Docker 环境..."
-	@docker compose -f docker-compose.test.yml down
+	@docker compose -f docker-compose.dev.yml down
 	@echo "✓ Docker 环境已停止"
 
 # ========== 构建与打包 ==========

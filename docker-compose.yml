@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ops_system}
+      POSTGRES_DB: ${POSTGRES_DB:-ops_service}
       POSTGRES_USER: ${POSTGRES_USER:-ops_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       PGDATA: /var/lib/postgresql/data/pgdata
@@ -49,25 +49,25 @@ services:
 
     environment:
       # 服务器配置
-      OPS_SERVER_ADDR: 0.0.0.0:3000
-      OPS_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS: 30
+      OPS_SERVER__ADDR: 0.0.0.0:3000
+      OPS_SERVER__GRACEFUL_SHUTDOWN_TIMEOUT_SECS: 30
 
       # 数据库配置
-      OPS_DATABASE_URL: postgresql://${POSTGRES_USER:-ops_user}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ops_system}
-      OPS_DATABASE_MAX_CONNECTIONS: 10
-      OPS_DATABASE_MIN_CONNECTIONS: 2
-      OPS_DATABASE_ACQUIRE_TIMEOUT_SECS: 30
-      OPS_DATABASE_IDLE_TIMEOUT_SECS: 600
-      OPS_DATABASE_MAX_LIFETIME_SECS: 1800
+      OPS_DATABASE__URL: postgresql://${POSTGRES_USER:-ops_user}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ops_service}
+      OPS_DATABASE__MAX_CONNECTIONS: 10
+      OPS_DATABASE__MIN_CONNECTIONS: 2
+      OPS_DATABASE__ACQUIRE_TIMEOUT_SECS: 30
+      OPS_DATABASE__IDLE_TIMEOUT_SECS: 600
+      OPS_DATABASE__MAX_LIFETIME_SECS: 1800
 
       # 日志配置
-      OPS_LOGGING_LEVEL: ${LOG_LEVEL:-info}
-      OPS_LOGGING_FORMAT: json
+      OPS_LOGGING__LEVEL: ${LOG_LEVEL:-info}
+      OPS_LOGGING__FORMAT: json
 
       # 安全配置
-      OPS_SECURITY_RATE_LIMIT_RPS: 100
-      OPS_SECURITY_TRUST_PROXY: "true"
-      OPS_SECURITY_ALLOWED_IPS: ${ALLOWED_IPS:-}
+      OPS_SECURITY__RATE_LIMIT_RPS: 100
+      OPS_SECURITY__TRUST_PROXY: "true"
+      OPS_SECURITY__ALLOWED_IPS: ${ALLOWED_IPS:-}
 
     depends_on:
       postgres:

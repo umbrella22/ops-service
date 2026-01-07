@@ -20,7 +20,7 @@ jobs:
         toolchain: stable
         components: rustfmt
     - name: Run fmt check
-      run: cargo fmt -- --check
+      run: cargo fmt --all -- --check
 
   clippy:
     name: Clippy
@@ -32,7 +32,7 @@ jobs:
         toolchain: stable
         components: clippy
     - name: Run clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --workspace -- -D warnings
 
   test:
     name: Test
@@ -57,10 +57,10 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Run tests
-      run: cargo test --lib --verbose
+      run: cargo test --workspace --verbose
 
     - name: Build release
-      run: cargo build --release
+      run: cargo build --release --workspace
 
   build:
     name: Build
@@ -102,12 +102,14 @@ jobs:
     - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
-        name: ops-system-binary
-        path: target/release/ops-system
+        name: ops-binaries
+        path: |
+          target/release/ops-service
+          target/release/ops-runner
 
     - name: Upload package
       uses: actions/upload-artifact@v4
       with:
-        name: ops-system-package
+        name: ops-package
         path: build/linux-x86_64/
         retention-days: 7

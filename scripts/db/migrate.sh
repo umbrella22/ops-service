@@ -24,7 +24,7 @@ MIGRATIONS_DIR="$PROJECT_ROOT/migrations"
 # 从环境变量或默认值获取数据库连接信息
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
-DB_NAME="${DB_NAME:-ops_system}"
+DB_NAME="${DB_NAME:-ops_service}"
 DB_USER="${DB_USER:-postgres}"
 
 # 检查密码
@@ -80,7 +80,7 @@ show_help() {
 环境变量:
   DB_HOST     数据库主机 (默认: localhost)
   DB_PORT     数据库端口 (默认: 5432)
-  DB_NAME     数据库名称 (默认: ops_system)
+  DB_NAME     数据库名称 (默认: ops_service)
   DB_USER     数据库用户 (默认: postgres)
   DB_PASSWORD 数据库密码
   OPS_DATABASE__URL  完整的数据库连接 URL

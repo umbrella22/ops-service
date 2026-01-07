@@ -8,6 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 
 # Parse arguments
 PLATFORM=${1:-x86_64}
+PACKAGE_NAME=${2:-$BINARY_NAME}
+BIN_NAME=${3:-$BINARY_NAME}
 
 validate_platform "$PLATFORM"
 
@@ -21,7 +23,8 @@ TARGET_TRIPLE=$(get_target_triple "$PLATFORM")
 export TARGET_TRIPLE
 
 log_info "Target triple: $TARGET_TRIPLE"
-log_info "Binary name: $BINARY_NAME"
+log_info "Package name: $PACKAGE_NAME"
+log_info "Binary name: $BIN_NAME"
 log_info "Version: $VERSION"
 
 # Check cross-compilation toolchain
@@ -38,9 +41,9 @@ fi
 
 # Build
 log_info "Starting Cargo build..."
-log_info "Build flags: --release --target $TARGET_TRIPLE"
+log_info "Build flags: --release --target $TARGET_TRIPLE -p $PACKAGE_NAME --bin $BIN_NAME"
 
-if cargo build --release --target "$TARGET_TRIPLE"; then
+if cargo build --release --target "$TARGET_TRIPLE" -p "$PACKAGE_NAME" --bin "$BIN_NAME"; then
     log_success "Build completed successfully"
 else
     log_error "Build failed"
@@ -48,7 +51,7 @@ else
 fi
 
 # Determine binary location
-BINARY_PATH="$PROJECT_ROOT/target/$TARGET_TRIPLE/release/$BINARY_NAME"
+BINARY_PATH="$PROJECT_ROOT/target/$TARGET_TRIPLE/release/$BIN_NAME"
 
 # Verify binary exists
 if [ ! -f "$BINARY_PATH" ]; then

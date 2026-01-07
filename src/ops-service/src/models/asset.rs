@@ -52,6 +52,11 @@ pub struct Host {
     pub notes: Option<String>,
     pub os_type: Option<String>,
     pub os_version: Option<String>,
+    // SSH 认证凭据（主机级，优先于全局默认值）
+    pub ssh_username: Option<String>,
+    pub ssh_password: Option<String>,       // 加密存储
+    pub ssh_private_key: Option<String>,    // 加密存储
+    pub ssh_key_passphrase: Option<String>, // 加密存储
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
@@ -77,6 +82,11 @@ pub struct CreateHostRequest {
     pub notes: Option<String>,
     pub os_type: Option<String>,
     pub os_version: Option<String>,
+    // SSH 认证凭据（可选）
+    pub ssh_username: Option<String>,
+    pub ssh_password: Option<String>,
+    pub ssh_private_key: Option<String>,
+    pub ssh_key_passphrase: Option<String>,
 }
 
 fn default_port() -> i32 {
@@ -100,6 +110,11 @@ pub struct UpdateHostRequest {
     pub notes: Option<String>,
     pub os_type: Option<String>,
     pub os_version: Option<String>,
+    // SSH 认证凭据（可选）
+    pub ssh_username: Option<String>,
+    pub ssh_password: Option<String>,
+    pub ssh_private_key: Option<String>,
+    pub ssh_key_passphrase: Option<String>,
     pub version: i32, // For optimistic locking
 }
 

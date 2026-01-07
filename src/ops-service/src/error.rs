@@ -46,6 +46,15 @@ pub enum AppError {
 
     #[error("Internal server error: {0}")]
     Internal(String),
+
+    #[error("SSH connection error: {0}")]
+    SshConnectionError(String),
+
+    #[error("SSH authentication failed: {0}")]
+    SshAuthenticationError(String),
+
+    #[error("SSH execution error: {0}")]
+    SshExecutionError(String),
 }
 
 impl AppError {
@@ -60,9 +69,12 @@ impl AppError {
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
             AppError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             AppError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
-            AppError::Database(_) | AppError::Config(_) | AppError::Internal(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            AppError::SshConnectionError(_)
+            | AppError::SshAuthenticationError(_)
+            | AppError::SshExecutionError(_)
+            | AppError::Database(_)
+            | AppError::Config(_)
+            | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -77,6 +89,9 @@ impl AppError {
             AppError::Validation(msg) => msg.clone(),
             AppError::RateLimitExceeded => "Rate limit exceeded".to_string(),
             AppError::Timeout(msg) => format!("Request timeout: {}", msg),
+            AppError::SshConnectionError(_) => "SSH connection failed".to_string(),
+            AppError::SshAuthenticationError(_) => "SSH authentication failed".to_string(),
+            AppError::SshExecutionError(_) => "SSH command execution failed".to_string(),
             AppError::Database(_) => "Database error occurred".to_string(),
             AppError::Config(_) => "Configuration error".to_string(),
             AppError::Internal(msg) => format!("Internal server error: {}", msg),

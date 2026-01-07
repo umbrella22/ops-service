@@ -182,7 +182,7 @@ if [ "$INSTALL_MODE" = "docker" ]; then
         log_info "Creating Docker environment file..."
         cat > "$DOCKER_DIR/.env" <<DOCKEREOF
 # PostgreSQL Configuration
-POSTGRES_DB=ops_system
+POSTGRES_DB=ops_service
 POSTGRES_USER=ops_user
 POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
 
@@ -292,7 +292,7 @@ if [ ! -f "$CONFIG_DIR/env" ]; then
     else
         cat > "$CONFIG_DIR/env" <<'ENVEOF'
 # Database configuration (NOTE: Use double underscore __ for nested fields)
-OPS_DATABASE__URL=postgresql://postgres:changeme@127.0.0.1:5432/ops_system
+OPS_DATABASE__URL=postgresql://postgres:changeme@127.0.0.1:5432/ops_service
 OPS_DATABASE__MAX_CONNECTIONS=10
 OPS_DATABASE__MIN_CONNECTIONS=2
 

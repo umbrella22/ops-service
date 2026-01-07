@@ -39,7 +39,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<PgPool, DbError> {
 pub async fn run_migrations(pool: &PgPool) -> Result<(), DbError> {
     tracing::info!("Running database migrations...");
 
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("../../migrations")
         .run(pool)
         .await
         .map_err(|e| {

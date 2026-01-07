@@ -38,14 +38,14 @@ docker-compose down
 docker-compose restart
 
 # 进入数据库
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 ```
 
 #### 在 Docker 中查看数据
 
 ```bash
 # 进入数据库容器
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 
 # 然后运行SQL查询（参考下方的"快速验证"）
 ```
@@ -71,11 +71,11 @@ cargo install sqlx-cli --no-default-features --features rustls,postgres
 
 ```bash
 # 创建数据库
-sudo -u postgres createdb ops_system
+sudo -u postgres createdb ops_service
 
 # 或使用 psql
 sudo -u postgres psql
-CREATE DATABASE ops_system;
+CREATE DATABASE ops_service;
 \q
 ```
 
@@ -87,7 +87,7 @@ cd ops-service
 ./scripts/migrate.sh migrate
 
 # 方法 B：使用 sqlx-cli
-export DATABASE_URL="postgresql://postgres:password@localhost:5432/ops_system"
+export DATABASE_URL="postgresql://postgres:password@localhost:5432/ops_service"
 sqlx migrate run --source migrations
 ```
 
@@ -98,14 +98,14 @@ sqlx migrate run --source migrations
 ./scripts/migrate.sh seed
 
 # 或手动加载
-psql -U postgres -d ops_system -f migrations/000003_seed_data.sql
+psql -U postgres -d ops_service -f migrations/000003_seed_data.sql
 ```
 
 #### 步骤 5：启动应用
 
 ```bash
 # 设置环境变量
-export OPS_DATABASE__URL="postgresql://postgres:password@localhost:5432/ops_system"
+export OPS_DATABASE__URL="postgresql://postgres:password@localhost:5432/ops_service"
 export OPS_SECURITY__JWT_SECRET="your-secret-key-min-32-characters-long"
 
 # 启动服务
@@ -139,7 +139,7 @@ cargo run
 
 ```bash
 # 进入数据库
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 
 # 然后运行下方的 SQL 查询
 ```
@@ -151,7 +151,7 @@ docker-compose exec postgres psql -U ops_user -d ops_system
 ./scripts/migrate.sh shell
 
 # 或使用 psql
-psql -U postgres -d ops_system
+psql -U postgres -d ops_service
 ```
 
 ### SQL 查询（两种方式通用）
@@ -232,7 +232,7 @@ SELECT * FROM v_recent_activity LIMIT 10;
 
 **Q: 如何查看数据库内容？**
 ```bash
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 ```
 
 **Q: 如何重置数据库？**
@@ -255,7 +255,7 @@ docker volume inspect ops-system_postgres_data  # 查看路径
 sudo systemctl status postgresql
 
 # 检查数据库是否存在
-psql -U postgres -l | grep ops_system
+psql -U postgres -l | grep ops_service
 ```
 
 **Q: 忘记密码？**

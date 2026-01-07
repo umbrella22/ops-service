@@ -102,7 +102,7 @@ docker-compose logs -f
 # ================================
 # PostgreSQL 数据库配置
 # ================================
-POSTGRES_DB=ops_system                    # 数据库名称
+POSTGRES_DB=ops_service                    # 数据库名称
 POSTGRES_USER=ops_user                    # 数据库用户
 POSTGRES_PASSWORD=<随机生成的密码>        # 数据库密码（安装时自动生成）
 
@@ -251,7 +251,7 @@ docker-compose exec postgres sh
 
 # 在容器中执行命令
 docker-compose exec api ps aux
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 
 # 查看容器资源使用
 docker stats
@@ -390,10 +390,10 @@ sudo tar czf {{BINARY_NAME}}-config-$(date +%Y%m%d).tar.gz /etc/{{BINARY_NAME}}/
 cd /etc/{{BINARY_NAME}}/docker
 
 # 从运行中的容器备份数据库
-docker-compose exec postgres pg_dump -U ops_user ops_system > backup.sql
+docker-compose exec postgres pg_dump -U ops_user ops_service > backup.sql
 
 # 或使用 docker exec
-docker exec {{BINARY_NAME}}-postgres-1 pg_dump -U ops_user ops_system > backup.sql
+docker exec {{BINARY_NAME}}-postgres-1 pg_dump -U ops_user ops_service > backup.sql
 ```
 
 #### 3. 备份 Docker 卷
@@ -414,7 +414,7 @@ docker run --rm \
 cd /etc/{{BINARY_NAME}}/docker
 
 # 恢复数据库
-cat backup.sql | docker-compose exec -T postgres psql -U ops_user ops_system
+cat backup.sql | docker-compose exec -T postgres psql -U ops_user ops_service
 ```
 
 #### 恢复配置
@@ -544,7 +544,7 @@ docker-compose ps postgres
 docker-compose exec postgres sh
 
 # 3. 测试数据库连接
-docker-compose exec postgres psql -U ops_user -d ops_system
+docker-compose exec postgres psql -U ops_user -d ops_service
 
 # 4. 检查数据库日志
 docker-compose logs postgres

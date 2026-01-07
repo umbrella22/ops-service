@@ -2,10 +2,10 @@
 //!
 //! 测试数据模型的验证功能
 
-use ops_system::models::asset::*;
-use ops_system::models::auth::*;
-use ops_system::models::role::*;
-use ops_system::models::user::*;
+use ops_service::models::asset::*;
+use ops_service::models::auth::*;
+use ops_service::models::role::*;
+use ops_service::models::user::*;
 use serde_json;
 use uuid::Uuid;
 

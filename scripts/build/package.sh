@@ -18,9 +18,10 @@ BUILD_DIR="$PROJECT_ROOT/build/linux-$PLATFORM"
 TARGET_TRIPLE=$(get_target_triple "$PLATFORM")
 SOURCE_BINARY="$PROJECT_ROOT/target/$TARGET_TRIPLE/release/$BINARY_NAME"
 
-# Step 1: Build binary
-print_section "Step 1: Building Binary"
-BINARY_PATH=$("$SCRIPT_DIR/build.sh" "$PLATFORM")
+# Step 1: Build binaries
+print_section "Step 1: Building Binaries"
+BINARY_PATH=$("$SCRIPT_DIR/build.sh" "$PLATFORM" "$BINARY_NAME" "$BINARY_NAME")
+RUNNER_BINARY_PATH=$("$SCRIPT_DIR/build.sh" "$PLATFORM" "$RUNNER_BINARY_NAME" "$RUNNER_BINARY_NAME")
 
 # Step 2: Create directory structure
 print_section "Step 2: Creating Directory Structure"
@@ -42,10 +43,12 @@ create_dir "$BUILD_DIR/systemd"
 create_dir "$BUILD_DIR/docs"
 create_dir "$BUILD_DIR/security"
 
-# Step 3: Copy binary
-print_section "Step 3: Copying Binary"
+# Step 3: Copy binaries
+print_section "Step 3: Copying Binaries"
 copy_file "$BINARY_PATH" "$BUILD_DIR/bin/$BINARY_NAME"
 make_executable "$BUILD_DIR/bin/$BINARY_NAME"
+copy_file "$RUNNER_BINARY_PATH" "$BUILD_DIR/bin/$RUNNER_BINARY_NAME"
+make_executable "$BUILD_DIR/bin/$RUNNER_BINARY_NAME"
 
 # Step 4: Copy migrations
 print_section "Step 4: Copying Migrations"
@@ -166,6 +169,13 @@ if [ -f "$SCRIPT_DIR/templates/systemd.service" ]; then
         "$BUILD_DIR/systemd/$BINARY_NAME.service" \
         "BINARY_NAME=$BINARY_NAME" \
         "VERSION=$VERSION"
+    chmod 644 "$BUILD_DIR/systemd/$BINARY_NAME.service"
+    substitute_vars \
+        "$SCRIPT_DIR/templates/systemd.service" \
+        "$BUILD_DIR/systemd/$RUNNER_BINARY_NAME.service" \
+        "BINARY_NAME=$RUNNER_BINARY_NAME" \
+        "VERSION=$VERSION"
+    chmod 644 "$BUILD_DIR/systemd/$RUNNER_BINARY_NAME.service"
     log_success "Created systemd service file"
 else
     log_warn "Systemd template not found"
@@ -237,6 +247,7 @@ log_success "Package created at: $BUILD_DIR"
 log_info "Version: $VERSION"
 log_info "Platform: $PLATFORM"
 log_info "Binary: $BUILD_DIR/bin/$BINARY_NAME"
+log_info "Runner: $BUILD_DIR/bin/$RUNNER_BINARY_NAME"
 
 # Display package contents
 echo ""

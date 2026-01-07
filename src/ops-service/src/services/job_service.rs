@@ -7,17 +7,20 @@ use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 use crate::concurrency::ConcurrencyController;
+use crate::config::SshConfig as AppSshConfig;
 use crate::error::{AppError, Result};
 use crate::models::asset::Host;
 use crate::models::job::*;
 use crate::services::audit_service::{AuditAction, AuditService};
 use crate::ssh::{SSHAuth, SSHClient, SSHConfig};
+use secrecy::ExposeSecret;
 
 /// 作业服务
 pub struct JobService {
     db: Pool<Postgres>,
     concurrency_controller: Arc<ConcurrencyController>,
     audit_service: Arc<AuditService>,
+    ssh_config: AppSshConfig,
 }
 
 impl JobService {
@@ -26,11 +29,13 @@ impl JobService {
         db: Pool<Postgres>,
         concurrency_controller: Arc<ConcurrencyController>,
         audit_service: Arc<AuditService>,
+        ssh_config: AppSshConfig,
     ) -> Self {
         Self {
             db,
             concurrency_controller,
             audit_service,
+            ssh_config,
         }
     }
 
@@ -154,9 +159,16 @@ impl JobService {
         let db_clone = self.db.clone();
         let concurrency_clone = self.concurrency_controller.clone();
         let audit_clone = self.audit_service.clone();
+        let ssh_config_clone = self.ssh_config.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await
+            if let Err(e) = Self::execute_job(
+                job_id,
+                db_clone,
+                concurrency_clone,
+                audit_clone,
+                ssh_config_clone,
+            )
+            .await
             {
                 error!(error = %e, job_id = %job_id, "Failed to execute job");
             }
@@ -467,9 +479,16 @@ impl JobService {
         let db_clone = self.db.clone();
         let concurrency_clone = self.concurrency_controller.clone();
         let audit_clone = self.audit_service.clone();
+        let ssh_config_clone = self.ssh_config.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                Self::execute_job(job_id, db_clone, concurrency_clone, audit_clone).await
+            if let Err(e) = Self::execute_job(
+                job_id,
+                db_clone,
+                concurrency_clone,
+                audit_clone,
+                ssh_config_clone,
+            )
+            .await
             {
                 error!(error = %e, job_id = %job_id, "Failed to execute job");
             }
@@ -602,6 +621,7 @@ impl JobService {
         db: Pool<Postgres>,
         concurrency_controller: Arc<ConcurrencyController>,
         audit_service: Arc<AuditService>,
+        ssh_config: AppSshConfig,
     ) -> Result<()> {
         info!(job_id = %job_id, "Starting job execution");
 
@@ -652,10 +672,19 @@ impl JobService {
             let audit_clone = audit_service.clone();
             let semaphore_clone = semaphore.clone();
             let job_clone = job.clone();
+            let ssh_config_clone = ssh_config.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore_clone.acquire().await.unwrap();
-                Self::execute_task(task, job_clone, db_clone, concurrency_clone, audit_clone).await
+                Self::execute_task(
+                    task,
+                    job_clone,
+                    db_clone,
+                    concurrency_clone,
+                    audit_clone,
+                    ssh_config_clone,
+                )
+                .await
             });
 
             task_handles.push(handle);
@@ -711,6 +740,7 @@ impl JobService {
         db: Pool<Postgres>,
         concurrency_controller: Arc<ConcurrencyController>,
         _audit_service: Arc<AuditService>,
+        ssh_config: AppSshConfig,
     ) -> Result<()> {
         info!(
             task_id = %task.id,
@@ -749,20 +779,53 @@ impl JobService {
             })?;
 
         // 创建SSH客户端并执行命令
-        let ssh_config = SSHConfig {
-            host: host.address.clone(),
-            port: host.port as u16,
-            username: job
-                .execute_user
-                .clone()
-                .unwrap_or_else(|| "root".to_string()),
-            auth: SSHAuth::Password("password".to_string()), // TODO: 从配置或密钥管理获取
-            connect_timeout_secs: 10,
-            handshake_timeout_secs: 10,
-            command_timeout_secs: job.timeout_secs.unwrap_or(300) as u64,
+        // 优先使用主机级凭据，否则回退到全局默认配置
+
+        // 确定用户名：主机级 > 作业指定 > 全局默认
+        let username = job
+            .execute_user
+            .clone()
+            .or_else(|| host.ssh_username.clone())
+            .unwrap_or_else(|| ssh_config.default_username.clone());
+
+        // 确定认证方式：优先使用主机级私钥，其次主机级密码，再然后全局私钥，最后全局密码
+        let auth = if let Some(host_private_key) = &host.ssh_private_key {
+            // 主机配置了私钥
+            SSHAuth::Key {
+                private_key: host_private_key.clone(),
+                passphrase: host.ssh_key_passphrase.clone(),
+            }
+        } else if host.ssh_password.is_some() {
+            // 主机配置了密码
+            SSHAuth::Password(host.ssh_password.clone().unwrap())
+        } else if let Some(global_private_key) = &ssh_config.default_private_key {
+            // 使用全局私钥
+            SSHAuth::Key {
+                private_key: global_private_key.expose_secret().clone(),
+                passphrase: ssh_config
+                    .private_key_passphrase
+                    .as_ref()
+                    .map(|p| p.expose_secret().clone()),
+            }
+        } else {
+            // 使用全局密码
+            SSHAuth::Password(ssh_config.default_password.expose_secret().clone())
         };
 
-        let client = SSHClient::new(ssh_config);
+        let ssh_exec_config = SSHConfig {
+            host: host.address.clone(),
+            port: host.port as u16,
+            username,
+            auth,
+            connect_timeout_secs: ssh_config.connect_timeout_secs,
+            handshake_timeout_secs: ssh_config.handshake_timeout_secs,
+            command_timeout_secs: job
+                .timeout_secs
+                .unwrap_or(ssh_config.command_timeout_secs as i32)
+                as u64,
+        };
+
+        let client = SSHClient::new(ssh_exec_config);
         let command = job.command.as_ref().unwrap();
         let result = client.execute(command).await;
 

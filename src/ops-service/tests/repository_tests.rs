@@ -2,15 +2,17 @@
 //!
 //! 测试数据访问层的功能（需要数据库连接）
 
-use ops_system::auth::password::PasswordHasher;
-use ops_system::config::{AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig};
-use ops_system::models::asset::*;
-use ops_system::models::role::*;
-use ops_system::models::user::*;
-use ops_system::repository::asset_repo::AssetRepository;
-use ops_system::repository::audit_repo::AuditRepository;
-use ops_system::repository::role_repo::RoleRepository;
-use ops_system::repository::user_repo::UserRepository;
+use ops_service::auth::password::PasswordHasher;
+use ops_service::config::{
+    AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig, SshConfig,
+};
+use ops_service::models::asset::*;
+use ops_service::models::role::*;
+use ops_service::models::user::*;
+use ops_service::repository::asset_repo::AssetRepository;
+use ops_service::repository::audit_repo::AuditRepository;
+use ops_service::repository::role_repo::RoleRepository;
+use ops_service::repository::user_repo::UserRepository;
 use secrecy::{ExposeSecret, Secret};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -18,7 +20,7 @@ use uuid::Uuid;
 /// 创建测试配置
 fn create_test_config() -> AppConfig {
     let database_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:postgres@localhost:5432/ops_system_test".to_string()
+        "postgresql://postgres:postgres@localhost:5432/ops_service_test".to_string()
     });
 
     AppConfig {
@@ -51,6 +53,15 @@ fn create_test_config() -> AppConfig {
             rate_limit_rps: 1000,
             trust_proxy: false,
             allowed_ips: None,
+        },
+        ssh: SshConfig {
+            default_username: "root".to_string(),
+            default_password: Secret::new("".to_string()),
+            default_private_key: None,
+            private_key_passphrase: None,
+            connect_timeout_secs: 10,
+            handshake_timeout_secs: 10,
+            command_timeout_secs: 300,
         },
     }
 }
@@ -481,6 +492,10 @@ async fn test_asset_repository_create_host() {
         notes: None,
         os_type: Some("Linux".to_string()),
         os_version: None,
+        ssh_username: None,
+        ssh_password: None,
+        ssh_private_key: None,
+        ssh_key_passphrase: None,
     };
 
     let host = repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
@@ -525,6 +540,10 @@ async fn test_asset_repository_list_hosts() {
             notes: None,
             os_type: None,
             os_version: None,
+            ssh_username: None,
+            ssh_password: None,
+            ssh_private_key: None,
+            ssh_key_passphrase: None,
         };
         repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
     }
@@ -547,7 +566,7 @@ async fn test_asset_repository_list_hosts() {
 #[tokio::test]
 #[ignore = "需要数据库连接"]
 async fn test_audit_repository_insert_and_query() {
-    use ops_system::models::audit::*;
+    use ops_service::models::audit::*;
 
     let pool = setup_test_db().await;
     let repo = AuditRepository::new(pool.clone());
@@ -594,7 +613,7 @@ async fn test_audit_repository_insert_and_query() {
 #[tokio::test]
 #[ignore = "需要数据库连接"]
 async fn test_audit_repository_count() {
-    use ops_system::models::audit::*;
+    use ops_service::models::audit::*;
 
     let pool = setup_test_db().await;
     let repo = AuditRepository::new(pool.clone());
