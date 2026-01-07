@@ -4,6 +4,98 @@ use crate::{error::AppError, models::audit::*, repository::audit_repo::AuditRepo
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// 审计操作类型
+#[derive(Debug, Clone, Copy)]
+pub enum AuditAction {
+    // 用户相关
+    UserCreate,
+    UserUpdate,
+    UserDelete,
+    UserLogin,
+    UserLogout,
+    UserPasswordChange,
+
+    // 资产相关
+    AssetGroupCreate,
+    AssetGroupUpdate,
+    AssetGroupDelete,
+    HostCreate,
+    HostUpdate,
+    HostDelete,
+
+    // 作业相关
+    JobCreate,
+    JobCancel,
+    JobRetry,
+    JobExecute,
+    JobOutputView,
+
+    // 构建相关
+    BuildCreate,
+    BuildExecute,
+    ArtifactDownload,
+
+    // 权限相关
+    RoleCreate,
+    RoleUpdate,
+    RoleDelete,
+    RoleBindingCreate,
+    RoleBindingDelete,
+
+    // 审批相关 (P3)
+    ApprovalCreate,
+    ApprovalApprove,
+    ApprovalReject,
+    ApprovalCancel,
+    ApprovalGroupCreate,
+    ApprovalGroupUpdate,
+    ApprovalGroupDelete,
+}
+
+impl AuditAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AuditAction::UserCreate => "user.create",
+            AuditAction::UserUpdate => "user.update",
+            AuditAction::UserDelete => "user.delete",
+            AuditAction::UserLogin => "user.login",
+            AuditAction::UserLogout => "user.logout",
+            AuditAction::UserPasswordChange => "user.password_change",
+
+            AuditAction::AssetGroupCreate => "asset.group.create",
+            AuditAction::AssetGroupUpdate => "asset.group.update",
+            AuditAction::AssetGroupDelete => "asset.group.delete",
+            AuditAction::HostCreate => "asset.host.create",
+            AuditAction::HostUpdate => "asset.host.update",
+            AuditAction::HostDelete => "asset.host.delete",
+
+            AuditAction::JobCreate => "job.create",
+            AuditAction::JobCancel => "job.cancel",
+            AuditAction::JobRetry => "job.retry",
+            AuditAction::JobExecute => "job.execute",
+            AuditAction::JobOutputView => "job.output_view",
+
+            AuditAction::BuildCreate => "build.create",
+            AuditAction::BuildExecute => "build.execute",
+            AuditAction::ArtifactDownload => "artifact.download",
+
+            AuditAction::RoleCreate => "role.create",
+            AuditAction::RoleUpdate => "role.update",
+            AuditAction::RoleDelete => "role.delete",
+            AuditAction::RoleBindingCreate => "role_binding.create",
+            AuditAction::RoleBindingDelete => "role_binding.delete",
+
+            AuditAction::ApprovalCreate => "approval.create",
+            AuditAction::ApprovalApprove => "approval.approve",
+            AuditAction::ApprovalReject => "approval.reject",
+            AuditAction::ApprovalCancel => "approval.cancel",
+            AuditAction::ApprovalGroupCreate => "approval_group.create",
+            AuditAction::ApprovalGroupUpdate => "approval_group.update",
+            AuditAction::ApprovalGroupDelete => "approval_group.delete",
+        }
+    }
+}
+
 /// 审计日志参数结构体
 #[derive(Debug, Clone)]
 pub struct AuditLogParams<'a> {
@@ -60,6 +152,36 @@ impl AuditService {
         Ok(())
     }
 
+    /// 简化的审计日志记录方法
+    pub async fn log_action_simple(
+        &self,
+        subject_id: Uuid,
+        action: AuditAction,
+        resource_type: Option<&str>,
+        resource_id: Option<Uuid>,
+        changes_summary: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<(), AppError> {
+        let params = AuditLogParams {
+            subject_id,
+            subject_type: "user",
+            subject_name: None,
+            action: action.as_str(),
+            resource_type: resource_type.unwrap_or("unknown"),
+            resource_id,
+            resource_name: None,
+            changes: None,
+            changes_summary,
+            source_ip: None,
+            user_agent: None,
+            trace_id: None,
+            result: if error_message.is_some() { "failure" } else { "success" },
+            error_message,
+        };
+
+        self.log_action(params).await
+    }
+
     /// 查询审计日志
     pub async fn query_logs(
         &self,
@@ -90,4 +212,5 @@ impl AuditService {
         repo.query_login_events(user_id, event_type, start_time, end_time, limit)
             .await
     }
+
 }

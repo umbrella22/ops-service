@@ -78,7 +78,7 @@ pub async fn get_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.find_by_id(&id).await?.ok_or(AppError::NotFound)?;
+    let user = repo.find_by_id(&id).await?.ok_or_else(|| AppError::not_found("User not found"))?;
 
     Ok(Json(UserResponse::from(user)))
 }
@@ -97,7 +97,7 @@ pub async fn update_user(
         .await?;
 
     let repo = crate::repository::UserRepository::new(state.db.clone());
-    let user = repo.update(id, &req).await?.ok_or(AppError::NotFound)?;
+    let user = repo.update(id, &req).await?.ok_or_else(|| AppError::not_found("User not found"))?;
 
     Ok(Json(json!({
         "message": "用户更新成功",
@@ -140,7 +140,7 @@ pub async fn change_password(
     let user = repo
         .find_by_id(&auth_context.user_id)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or_else(|| AppError::not_found("User not found"))?;
 
     let hasher = PasswordHasher::new();
     hasher.verify(&req.old_password, &user.password_hash)?;

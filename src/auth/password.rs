@@ -34,7 +34,7 @@ impl PasswordHasher {
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| {
                 tracing::error!("Failed to hash password: {:?}", e);
-                AppError::Internal
+                AppError::Internal(format!("Failed to hash password: {}", e))
             })?
             .to_string();
 
@@ -45,7 +45,7 @@ impl PasswordHasher {
     pub fn verify(&self, password: &str, hash: &str) -> Result<(), AppError> {
         let parsed_hash = PasswordHash::new(hash).map_err(|e| {
             tracing::debug!("Failed to parse password hash: {:?}", e);
-            AppError::Internal
+            AppError::Internal(format!("Failed to parse password hash: {}", e))
         })?;
 
         self.argon2

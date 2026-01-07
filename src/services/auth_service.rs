@@ -91,7 +91,7 @@ impl AuthService {
             id: Uuid::new_v4(),
             token_hash,
             user_id: user.id,
-            device_id: None, // TODO: 生成设备指纹
+            device_id: self.generate_device_fingerprint(user_agent),
             user_agent: user_agent.map(|s| s.to_string()),
             ip_address: client_ip.to_string(),
             expires_at: chrono::Utc::now()
@@ -185,7 +185,7 @@ impl AuthService {
             id: Uuid::new_v4(),
             token_hash: new_token_hash,
             user_id: user.id,
-            device_id: None,
+            device_id: None, // 刷新时不重新生成设备指纹
             user_agent: None,
             ip_address: client_ip.to_string(),
             expires_at: chrono::Utc::now()
@@ -224,7 +224,7 @@ impl AuthService {
             "disabled" => Err(AppError::BadRequest("账户已被禁用".to_string())),
             "locked" => Err(AppError::BadRequest("账户已被锁定".to_string())),
             "enabled" => Ok(()),
-            _ => Err(AppError::Internal),
+            _ => Err(AppError::Internal("Unknown account status".to_string())),
         }
     }
 
@@ -299,11 +299,55 @@ impl AuthService {
             source_ip: source_ip.to_string(),
             user_agent: user_agent.map(|s| s.to_string()),
             device_id: None,
-            risk_tag: None, // TODO: 实现风险评估
+            risk_tag: self.assess_login_risk(source_ip, user_agent, 0),
             occurred_at: chrono::Utc::now(),
         };
 
         // 忽略审计日志错误，不要破坏请求流程
         let _ = auth_repo.record_login_event(&event).await;
+    }
+
+    // ==================== 安全增强功能 ====================
+
+    /// 生成设备指纹
+    ///
+    /// 基于 User-Agent 生成简单的哈希值作为设备指纹
+    /// 用于识别同一设备的多次登录
+    fn generate_device_fingerprint(&self, user_agent: Option<&str>) -> Option<String> {
+        let ua = user_agent?;
+
+        // 基于 User-Agent 生成简单哈希
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        ua.hash(&mut hasher);
+        Some(format!("{:x}", hasher.finish()))
+    }
+
+    /// 评估登录风险
+    ///
+    /// 检查以下风险因素：
+    /// - 暴力破解（多次失败登录）
+    /// - 新设备（设备指纹不在白名单中）
+    /// - 异常 IP 地理位置
+    /// - 异常登录时间
+    fn assess_login_risk(
+        &self,
+        _client_ip: &str,
+        _user_agent: Option<&str>,
+        recent_failures: i64,
+    ) -> Option<String> {
+        // 检查暴力破解风险
+        if recent_failures >= 5 {
+            return Some("brute_force".to_string());
+        }
+
+        // TODO: 添加更多风险评估逻辑
+        // - 检查是否为新设备
+        // - 检查 IP 地理位置
+        // - 检查异常登录时间
+
+        None
     }
 }

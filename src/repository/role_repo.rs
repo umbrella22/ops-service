@@ -88,7 +88,7 @@ impl RoleRepository {
     /// 删除角色
     pub async fn delete(&self, id: Uuid) -> Result<bool, AppError> {
         // 检查是否为系统角色
-        let role = self.find_by_id(&id).await?.ok_or(AppError::NotFound)?;
+        let role = self.find_by_id(&id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
 
         if role.is_system {
             return Err(AppError::BadRequest("Cannot delete system role".to_string()));

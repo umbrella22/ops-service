@@ -202,8 +202,10 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_config_defaults() {
         // 清理所有可能的环境变量
         std::env::remove_var("OPS_DATABASE__URL");
@@ -223,6 +225,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_validation_invalid_port() {
         // 清理环境变量
         std::env::remove_var("OPS_SERVER__ADDR");
@@ -241,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_validation_invalid_log_level() {
         // 清理环境变量
         std::env::remove_var("OPS_LOGGING__LEVEL");

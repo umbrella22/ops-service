@@ -8,6 +8,9 @@ use axum::{
 use serde::Serialize;
 use thiserror::Error;
 
+/// 结果类型别名
+pub type Result<T> = std::result::Result<T, AppError>;
+
 /// 应用错误类型
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -20,20 +23,29 @@ pub enum AppError {
     #[error("Authentication failed")]
     Unauthorized,
 
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+
     #[error("Access denied")]
     Forbidden,
 
-    #[error("Resource not found")]
-    NotFound,
+    #[error("Resource not found: {0}")]
+    NotFound(String),
 
     #[error("Invalid request: {0}")]
     BadRequest(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
-    #[error("Internal server error")]
-    Internal,
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    #[error("Internal server error: {0}")]
+    Internal(String),
 }
 
 impl AppError {
@@ -41,11 +53,14 @@ impl AppError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
-            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Validation(_) => StatusCode::BAD_REQUEST,
             AppError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
-            AppError::Database(_) | AppError::Config(_) | AppError::Internal => {
+            AppError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
+            AppError::Database(_) | AppError::Config(_) | AppError::Internal(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
@@ -55,19 +70,47 @@ impl AppError {
     pub fn user_message(&self) -> String {
         match self {
             AppError::Unauthorized => "Authentication failed".to_string(),
+            AppError::Authentication(msg) => msg.clone(),
+            AppError::NotFound(msg) => format!("Resource not found: {}", msg),
             AppError::Forbidden => "Access denied".to_string(),
-            AppError::NotFound => "Resource not found".to_string(),
             AppError::BadRequest(msg) => msg.clone(),
+            AppError::Validation(msg) => msg.clone(),
             AppError::RateLimitExceeded => "Rate limit exceeded".to_string(),
+            AppError::Timeout(msg) => format!("Request timeout: {}", msg),
             AppError::Database(_) => "Database error occurred".to_string(),
             AppError::Config(_) => "Configuration error".to_string(),
-            AppError::Internal => "Internal server error".to_string(),
+            AppError::Internal(msg) => format!("Internal server error: {}", msg),
         }
     }
 
     /// 获取错误码
     pub fn code(&self) -> u16 {
         self.status_code().as_u16()
+    }
+
+    // 便捷方法
+    pub fn not_found(msg: &str) -> Self {
+        AppError::NotFound(msg.to_string())
+    }
+
+    pub fn validation(msg: &str) -> Self {
+        AppError::Validation(msg.to_string())
+    }
+
+    pub fn database(msg: &str) -> Self {
+        AppError::Internal(format!("Database error: {}", msg))
+    }
+
+    pub fn authentication(msg: &str) -> Self {
+        AppError::Authentication(msg.to_string())
+    }
+
+    pub fn internal_error(msg: &str) -> Self {
+        AppError::Internal(msg.to_string())
+    }
+
+    pub fn timeout(msg: &str) -> Self {
+        AppError::Timeout(msg.to_string())
     }
 }
 
@@ -131,7 +174,7 @@ mod tests {
     fn test_error_codes() {
         assert_eq!(AppError::Unauthorized.code(), 401);
         assert_eq!(AppError::Forbidden.code(), 403);
-        assert_eq!(AppError::NotFound.code(), 404);
+        assert_eq!(AppError::NotFound("test".to_string()).code(), 404);
         assert_eq!(AppError::BadRequest("test".to_string()).code(), 400);
         assert_eq!(AppError::RateLimitExceeded.code(), 429);
     }
@@ -142,5 +185,12 @@ mod tests {
         let message = error.user_message();
         assert_eq!(message, "Database error occurred");
         assert!(!message.contains("sqlx"));
+    }
+}
+
+/// 从 ConcurrencyError 转换
+impl From<crate::concurrency::ConcurrencyError> for AppError {
+    fn from(e: crate::concurrency::ConcurrencyError) -> Self {
+        AppError::Internal(format!("Concurrency error: {}", e))
     }
 }

@@ -28,6 +28,9 @@ pub struct AppState {
     pub permission_service: Arc<crate::services::PermissionService>,
     pub audit_service: Arc<crate::services::AuditService>,
     pub jwt_service: Arc<crate::auth::jwt::JwtService>,
+    pub job_service: Arc<crate::services::JobService>,
+    pub approval_service: Arc<crate::services::ApprovalService>,
+    pub event_bus: Arc<crate::realtime::EventBus>,
 }
 
 /// 请求追踪中间件

@@ -245,7 +245,7 @@ impl AssetRepository {
         updated_by: Uuid,
     ) -> Result<Option<Host>, AppError> {
         // 乐观锁：检查版本
-        let current: Host = self.get_host(id).await?.ok_or(AppError::NotFound)?;
+        let current: Host = self.get_host(id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
 
         if current.version != req.version {
             return Err(AppError::BadRequest("资源已被其他用户修改".to_string()));

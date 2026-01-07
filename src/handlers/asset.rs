@@ -84,7 +84,7 @@ pub async fn get_group(
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let group = repo.get_group(id).await?.ok_or(AppError::NotFound)?;
+    let group = repo.get_group(id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(group))
 }
@@ -106,7 +106,7 @@ pub async fn update_group(
     let group = repo
         .update_group(id, &req)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(json!({
         "message": "资产组更新成功",
@@ -215,7 +215,7 @@ pub async fn get_host(
         .await?;
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
-    let host = repo.get_host(id).await?.ok_or(AppError::NotFound)?;
+    let host = repo.get_host(id).await?.ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(host))
 }
@@ -237,7 +237,7 @@ pub async fn update_host(
     let host = repo
         .update_host(id, &req, auth_context.user_id)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     Ok(Json(json!({
         "message": "主机更新成功",

@@ -1,84 +1,182 @@
 # 测试套件
 
-这是一套完整的自动化测试套件,用于验证运维系统的功能正确性。
+这是一套完整的自动化测试套件，用于验证运维系统的功能正确性。
 
 ## 测试结构
 
 ```
 tests/
-├── common/                   # 测试公共模块
-│   └── mod.rs               # 测试工具函数
-├── api_health_tests.rs      # 健康检查 API 测试
-├── api_auth_tests.rs        # 认证 API 测试
-├── service_tests.rs         # 服务层测试
-└── repository_tests.rs      # 仓库层测试
+├── common/                        # 测试公共模块
+│   └── mod.rs                    # 测试工具函数
+├── password_tests.rs             # 密码哈希功能单元测试
+├── jwt_tests.rs                  # JWT 服务单元测试
+├── audit_service_tests.rs        # 审计服务单元测试
+├── permission_service_tests.rs   # 权限服务单元测试
+├── model_validation_tests.rs     # 模型验证单元测试
+├── error_tests.rs                # 错误处理单元测试
+├── api_tests.rs                  # API 集成测试
+└── repository_tests.rs           # 仓库层集成测试 (需要数据库)
 ```
 
 ## 测试覆盖范围
 
-### 1. 集成测试 (API层)
+### 1. 密码哈希测试 (`password_tests.rs`)
 
-#### `api_health_tests.rs` - 健康检查测试
+- ✅ 密码哈希和验证
+- ✅ 错误密码验证失败
+- ✅ 每次哈希结果不同 (盐值)
+- ✅ 空密码和长密码处理
+- ✅ Unicode 密码支持
+- ✅ 密码策略验证 (长度、大写、数字)
+- ✅ 默认端口和状态值
+- ✅ 密码哈希器默认实现
+- ✅ 无效哈希格式处理
+
+**测试数量**: 18
+
+### 2. JWT 服务测试 (`jwt_tests.rs`)
+
+- ✅ JWT 服务创建
+- ✅ 密钥长度验证
+- ✅ Access Token 生成和验证
+- ✅ Refresh Token 生成和验证
+- ✅ Token 类型验证 (access vs refresh)
+- ✅ TokenPair 生成
+- ✅ 多角色和权限的 Token
+- ✅ Token 过期时间验证
+- ✅ Unicode 用户名支持
+- ✅ Token 篡改检测
+
+**测试数量**: 17
+
+### 3. 审计服务测试 (`audit_service_tests.rs`)
+
+- ✅ 审计操作显示字符串
+- ✅ 审计操作覆盖范围
+- ✅ 审计操作分类
+- ✅ 审计日志参数结构
+- ✅ 带错误的审计日志
+- ✅ 最小化审计日志参数
+- ✅ JSON 变更记录
+- ✅ Unicode 支持审计日志
+- ✅ 审计操作名称一致性
+- ✅ 审计操作多样性验证
+
+**测试数量**: 11
+
+### 4. 权限服务测试 (`permission_service_tests.rs`)
+
+- ✅ 全局范围匹配
+- ✅ 组范围匹配
+- ✅ 环境范围匹配
+- ✅ 组范围无值情况
+- ✅ 环境范围无值情况
+- ✅ 未知范围类型
+- ✅ 角色绑定结构
+- ✅ 多个范围类型的角色绑定
+- ✅ 不同组/环境的范围
+- ✅ 空范围值处理
+- ✅ 角色名称
+- ✅ 权限表示格式 (resource:action)
+- ✅ 通配符权限
+
+**测试数量**: 16
+
+### 5. 模型验证测试 (`model_validation_tests.rs`)
+
+- ✅ 用户状态转换
+- ✅ 创建/更新用户请求反序列化
+- ✅ 登录/刷新令牌请求
+- ✅ 角色相关请求
+- ✅ 主机请求 (默认值、所有字段)
+- ✅ 组请求
+- ✅ UUID 验证
+- ✅ Unicode 字符支持
+- ✅ 特殊字符处理
+- ✅ 空值和边界测试
+
+**测试数量**: 31
+
+### 6. 错误处理测试 (`error_tests.rs`)
+
+- ✅ 错误状态码映射
+- ✅ 用户消息 (无敏感信息)
+- ✅ 错误码
+- ✅ 便捷方法 (not_found, validation, etc.)
+- ✅ 错误显示
+- ✅ From 转换
+- ✅ 错误序列化
+- ✅ 错误传播
+- ✅ 错误匹配
+- ✅ 特殊错误场景
+
+**测试数量**: 26
+
+### 7. API 集成测试 (`api_tests.rs`)
+
 - ✅ 健康检查端点 `/health`
-- ✅ 就绪检查端点 `/ready`
-- ✅ 指标端点 `/metrics`
 - ✅ 404 错误处理
+- ✅ 方法不允许 (405)
+- ✅ 响应结构验证
+- ✅ 空请求体
+- ✅ 无效 URI
+- ✅ 响应头验证
+- ✅ 查询参数处理
+- ✅ 并发请求
+- ⏭️ 登录凭证验证 (需要数据库)
+- ⏭️ 空凭证登录 (需要数据库)
 
-#### `api_auth_tests.rs` - 认证 API 测试
-- ✅ 用户登录成功
-- ✅ 密码错误登录失败
-- ✅ 用户不存在登录失败
-- ✅ 获取当前用户信息
-- ✅ 无 token 访问受保护端点
-- ✅ 用户登出
+**测试数量**: 15 (13 运行 + 2 忽略)
 
-### 2. 单元测试 (服务层)
+### 8. 仓库层集成测试 (`repository_tests.rs`)
 
-#### `service_tests.rs` - 服务层测试
-- ✅ AuthService 登录成功
-- ✅ AuthService 密码错误
-- ✅ AuthService 登录速率限制
-- ✅ AuthService 刷新令牌
-- ✅ PermissionService 权限检查
-- ✅ AuditService 审计日志记录
-- ✅ JwtService 令牌生成和验证
-- ✅ JwtService 无效令牌验证
+- ⏭️ UserRepository - 创建、查找、更新、删除用户
+- ⏭️ UserRepository - 失败登录次数管理
+- ⏭️ RoleRepository - 角色操作和权限分配
+- ⏭️ AssetRepository - 资产组和主机管理
+- ⏭️ AuditRepository - 审计日志记录和查询
 
-### 3. 单元测试 (仓库层)
-
-#### `repository_tests.rs` - 仓库层测试
-- ✅ UserRepository 创建和查找用户
-- ✅ UserRepository 按 ID 查找
-- ✅ UserRepository 更新失败登录次数
-- ✅ RoleRepository 创建和查找角色
-- ✅ AssetRepository 创建资产组
-- ✅ AssetRepository 创建主机
-- ✅ AssetRepository 列出主机
-- ✅ AuditRepository 日志记录和检索
-- ✅ AuditRepository 日志计数
+**测试数量**: 12 (全部需要数据库连接)
 
 ## 运行测试
 
 ### 前置条件
 
-1. 确保已安装 PostgreSQL
-2. 创建测试数据库:
-   ```bash
-   createdb ops_system_test
-   ```
-
-### 设置环境变量
+#### 单元测试 (无需数据库)
+大部分单元测试可以直接运行，不需要数据库连接：
 
 ```bash
-export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ops_system_test"
+# 运行所有无需数据库的单元测试
+cargo test --test password_tests \
+             --test jwt_tests \
+             --test audit_service_tests \
+             --test permission_service_tests \
+             --test model_validation_tests \
+             --test error_tests \
+             --test api_tests
 ```
 
-或者直接使用默认的测试数据库连接字符串。
+#### 集成测试 (需要数据库)
+仓库层测试需要 PostgreSQL 数据库连接：
+
+```bash
+# 1. 确保 PostgreSQL 正在运行
+sudo systemctl start postgresql
+
+# 2. 创建测试数据库
+createdb ops_system_test
+
+# 3. 设置环境变量 (可选，有默认值)
+export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ops_system_test"
+
+# 4. 运行仓库层测试
+cargo test --test repository_tests
+```
 
 ### 运行所有测试
 
 ```bash
-# 运行所有测试
+# 运行所有测试 (跳过需要数据库的测试)
 cargo test
 
 # 运行测试并显示输出
@@ -86,65 +184,58 @@ cargo test -- --nocapture
 
 # 运行测试并显示详细信息
 cargo test -- --show-output
+
+# 只运行单元测试 (不运行集成测试)
+cargo test --lib
 ```
 
 ### 运行特定测试
 
 ```bash
-# 运行 API 测试
-cargo test --test api_health_tests
-cargo test --test api_auth_tests
+# 密码相关测试
+cargo test --test password_tests
 
-# 运行服务层测试
-cargo test --test service_tests
+# JWT 测试
+cargo test --test jwt_tests
 
-# 运行仓库层测试
-cargo test --test repository_tests
+# 错误处理测试
+cargo test --test error_tests
+
+# 模型验证测试
+cargo test test_user_status
+cargo test test_password_hash
 
 # 运行特定测试函数
-cargo test test_login_success
+cargo test test_password_hash_and_verify
 ```
 
-### 忽略需要数据库的测试
-
-某些测试需要数据库连接,可以临时跳过:
+### 运行被忽略的测试
 
 ```bash
-# 跳过需要数据库的测试
-cargo test --ignore
+# 包含被标记为 #[ignore] 的测试
+cargo test -- --ignored
+
+# 包含需要数据库连接的测试
+cargo test --test repository_tests --test api_tests
 ```
 
-## 测试数据库管理
+## 测试分类
 
-### 清理测试数据
-
-测试运行后会自动清理数据。如果需要手动清理:
-
-```bash
-psql -U postgres -d ops_system_test -c "TRUNCATE TABLE audit_logs, refresh_tokens, assets_hosts, asset_groups, users, roles CASCADE;"
-```
-
-### 重新创建测试数据库
-
-```bash
-dropdb ops_system_test
-createdb ops_system_test
-```
-
-## 持续集成
-
-测试配置在项目根目录的 `.github/workflows/test.yml` (如果存在)。
-
-CI 流程会:
-1. 设置 Rust 环境
-2. 启动 PostgreSQL 容器
-3. 运行数据库迁移
-4. 执行所有测试
-5. 生成代码覆盖率报告
+| 类型 | 文件 | 需要数据库 | 测试数量 |
+|------|------|------------|----------|
+| 单元测试 | password_tests.rs | ❌ | 18 |
+| 单元测试 | jwt_tests.rs | ❌ | 17 |
+| 单元测试 | audit_service_tests.rs | ❌ | 11 |
+| 单元测试 | permission_service_tests.rs | ❌ | 16 |
+| 单元测试 | model_validation_tests.rs | ❌ | 31 |
+| 单元测试 | error_tests.rs | ❌ | 26 |
+| 集成测试 | api_tests.rs | 部分 | 15 |
+| 集成测试 | repository_tests.rs | ✅ | 12 |
+| **总计** | - | - | **146+** |
 
 ## 代码覆盖率
 
-安装 tarpaulin 来生成覆盖率报告:
+安装 tarpaulin 来生成覆盖率报告：
 
 ```bash
 cargo install cargo-tarpaulin
@@ -158,39 +249,40 @@ open coverage/index.html
 
 ## 最佳实践
 
-1. **隔离性**: 每个测试独立运行,不依赖其他测试的状态
-2. **清理**: 测试完成后清理数据库,避免影响其他测试
-3. **幂等性**: 多次运行同一测试应该得到相同结果
-4. **快速**: 单元测试应该快速执行
-5. **明确**: 测试名称应该清楚描述测试内容
+1. **隔离性**: 每个测试独立运行，不依赖其他测试的状态
+2. **快速**: 单元测试应该快速执行，不需要外部依赖
+3. **明确**: 测试名称应该清楚描述测试内容
+4. **幂等性**: 多次运行同一测试应该得到相同结果
+5. **覆盖**: 测试应覆盖正常路径和边界情况
 
 ## 添加新测试
 
-1. 在相应的测试文件中添加新的 `#[tokio::test]` 函数
-2. 使用 `common` 模块中的工具函数
-3. 遵循命名约定: `test_<功能>_<场景>_<期望结果>`
-4. 确保测试后清理数据
+### 单元测试示例
 
-示例:
+```rust
+#[test]
+fn test_password_hash_and_verify() {
+    let hasher = PasswordHasher::new();
+    let password = "TestPassword123!";
+
+    let hash = hasher.hash(password).expect("Hashing should succeed");
+    hasher.verify(password, &hash).expect("Verification should succeed");
+}
+```
+
+### 集成测试示例
 
 ```rust
 #[tokio::test]
-async fn test_user_delete_success() {
-    let config = common::create_test_config();
-    let pool = common::setup_test_db(&config).await;
+#[ignore = "需要数据库连接"]
+async fn test_user_repository_create() {
+    let pool = setup_test_db().await;
+    let repo = UserRepository::new(pool);
 
-    // 准备测试数据
-    let user_id = create_test_user(&pool, "testuser", "TestPass123", "test@example.com")
-        .await
-        .expect("Failed to create test user");
+    let req = CreateUserRequest { /* ... */ };
+    let user = repo.create(&req, &password_hash, user_id).await.unwrap();
 
-    // 执行测试操作
-    // ...
-
-    // 验证结果
-    assert_eq!(result, expected);
-
-    // 清理会自动进行
+    assert_eq!(user.username, "testuser");
 }
 ```
 
@@ -200,10 +292,7 @@ async fn test_user_delete_success() {
 
 确保 PostgreSQL 正在运行:
 ```bash
-# 检查 PostgreSQL 状态
 sudo systemctl status postgresql
-
-# 启动 PostgreSQL
 sudo systemctl start postgresql
 ```
 
@@ -214,17 +303,17 @@ sudo systemctl start postgresql
 createdb ops_system_test
 ```
 
-### 测试超时
+### 编译错误
 
-增加测试超时时间:
+确保所有依赖已安装:
 ```bash
-cargo test -- --test-threads=1
+cargo build
 ```
 
 ## 贡献指南
 
 提交代码前请确保:
-1. 所有测试通过
+1. 所有单元测试通过
 2. 新功能包含对应的测试
 3. 代码覆盖率没有降低
 4. 遵循项目的编码规范

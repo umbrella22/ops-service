@@ -97,7 +97,7 @@ impl JwtService {
 
         encode(&Header::default(), &claims, &self.encoding_key).map_err(|e| {
             tracing::error!("Failed to encode access token: {:?}", e);
-            AppError::Internal
+            AppError::Internal(format!("Failed to encode access token: {}", e))
         })
     }
 
@@ -123,7 +123,7 @@ impl JwtService {
 
         encode(&Header::default(), &claims, &self.encoding_key).map_err(|e| {
             tracing::error!("Failed to encode refresh token: {:?}", e);
-            AppError::Internal
+            AppError::Internal(format!("Failed to encode refresh token: {}", e))
         })
     }
 

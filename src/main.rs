@@ -2,7 +2,8 @@
 //! P0 阶段：骨架与基线能力
 
 use ops_system::{
-    config::AppConfig, db, handlers::health, middleware::AppState, routes, telemetry,
+    concurrency::ConcurrencyController,
+    config::AppConfig, db, handlers::health, middleware::AppState, realtime::EventBus, routes, telemetry,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -65,6 +66,25 @@ async fn main() -> anyhow::Result<()> {
 
     // 4. 构建应用状态
     // 注意: 这里的 AppState 只包含基础配置，services 会在 routes.rs 中创建
+    let concurrency_controller = std::sync::Arc::new(ConcurrencyController::new(
+        ops_system::concurrency::ConcurrencyConfig::default()
+    ));
+
+    // 创建审计服务（多个服务共享）
+    let audit_service = std::sync::Arc::new(ops_system::services::AuditService::new(
+        db_pool.clone(),
+    ));
+
+    // 创建事件总线 (P3 实时能力)
+    let event_bus = std::sync::Arc::new(EventBus::new(1000));
+
+    // 创建审批服务 (P3 审批流)
+    let approval_service = std::sync::Arc::new(ops_system::services::ApprovalService::new(
+        db_pool.clone(),
+        audit_service.clone(),
+        event_bus.clone(),
+    ));
+
     let app_state = Arc::new(AppState {
         db: db_pool.clone(),
         config: config.clone(),
@@ -76,10 +96,15 @@ async fn main() -> anyhow::Result<()> {
         permission_service: std::sync::Arc::new(ops_system::services::PermissionService::new(
             db_pool.clone(),
         )),
-        audit_service: std::sync::Arc::new(ops_system::services::AuditService::new(
-            db_pool.clone(),
-        )),
+        audit_service: audit_service.clone(),
         jwt_service: std::sync::Arc::new(ops_system::auth::jwt::JwtService::from_config(&config)?),
+        job_service: std::sync::Arc::new(ops_system::services::JobService::new(
+            db_pool.clone(),
+            concurrency_controller.clone(),
+            audit_service,
+        )),
+        approval_service,
+        event_bus,
     });
 
     // 5. 构建路由
