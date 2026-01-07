@@ -91,7 +91,7 @@ impl JobService {
         .bind(JobType::Command)
         .bind(&request.name)
         .bind(&request.description)
-        .bind(&target_hosts.iter().map(|h| h.id).collect::<Vec<_>>())
+        .bind(target_hosts.iter().map(|h| h.id).collect::<Vec<_>>())
         .bind(&request.target_groups)
         .bind(&request.command)
         .bind(request.concurrent_limit)
@@ -541,14 +541,14 @@ impl JobService {
 
     /// 通过幂等键查找作业
     async fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Job>> {
-        Ok(sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE idempotency_key = $1")
+        sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE idempotency_key = $1")
             .bind(key)
             .fetch_optional(&self.db)
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to fetch job by idempotency key");
                 AppError::database("Failed to fetch job")
-            })?)
+            })
     }
 
     /// 解析目标主机（直接指定的 + 分组中的）
@@ -795,7 +795,7 @@ impl JobService {
                 .bind(&output_summary)
                 .bind(&exec_result.stdout)
                 .bind(&failure_reason)
-                .bind(&failure_message)
+                .bind(failure_message)
                 .bind(exec_result.duration_secs as i64)
                 .bind(task.id)
                 .execute(&db)

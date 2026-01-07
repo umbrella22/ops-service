@@ -320,7 +320,15 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
+}
 
+impl Default for ConnectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConnectionManager {
     /// 注册连接
     pub async fn register(&self, conn_id: Uuid, info: ConnectionInfo) {
         let mut conns = self.connections.write().await;

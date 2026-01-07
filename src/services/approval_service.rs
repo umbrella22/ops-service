@@ -45,11 +45,9 @@ impl ApprovalService {
         info!(title = %request.title, "Creating approval request");
 
         // 计算过期时间
-        let expires_at = if let Some(timeout_mins) = request.timeout_mins {
-            Some(Utc::now() + Duration::minutes(timeout_mins as i64))
-        } else {
-            None // 默认不超时
-        };
+        let expires_at = request
+            .timeout_mins
+            .map(|timeout_mins| Utc::now() + Duration::minutes(timeout_mins as i64));
 
         // 创建审批请求
         let approval_id = Uuid::new_v4();
