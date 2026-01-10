@@ -1,6 +1,9 @@
 -- P3: 审批流系统
 -- 实现作业审批流程、审批组和审批记录管理
 
+-- 审批状态类型
+CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'rejected', 'cancelled', 'timeout');
+
 -- 审批组表
 CREATE TABLE approval_groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

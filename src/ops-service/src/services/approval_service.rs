@@ -620,4 +620,395 @@ impl ApprovalService {
             avg_approval_time_mins: avg_time,
         })
     }
+
+    // ==================== 测试辅助方法 ====================
+
+    /// 测试用：检查是否为高风险命令（公开用于测试）
+    #[cfg(test)]
+    pub fn is_high_risk_command_public(command: &str) -> bool {
+        let high_risk_patterns = vec![
+            "rm -rf",
+            "dd if",
+            "mkfs",
+            ":(){ :|:& };:", // fork bomb
+            "format",
+            "del /q",
+            "shutdown",
+            "reboot",
+            "> /dev/",
+            "truncate -s 0",
+        ];
+
+        let command_lower = command.to_lowercase();
+        high_risk_patterns
+            .iter()
+            .any(|pattern| command_lower.contains(&pattern.to_lowercase()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::approval::*;
+    use chrono::Utc;
+    use sqlx::types::Json;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_approval_status_serialization() {
+        let statuses = vec![
+            (ApprovalStatus::Pending, "Pending"),
+            (ApprovalStatus::Approved, "Approved"),
+            (ApprovalStatus::Rejected, "Rejected"),
+            (ApprovalStatus::Cancelled, "Cancelled"),
+            (ApprovalStatus::Timeout, "Timeout"),
+        ];
+
+        for (status, expected) in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, format!("\"{}\"", expected));
+
+            let deserialized: ApprovalStatus = serde_json::from_str(&json).unwrap();
+            match (status, deserialized) {
+                (ApprovalStatus::Pending, ApprovalStatus::Pending) => {}
+                (ApprovalStatus::Approved, ApprovalStatus::Approved) => {}
+                (ApprovalStatus::Rejected, ApprovalStatus::Rejected) => {}
+                (ApprovalStatus::Cancelled, ApprovalStatus::Cancelled) => {}
+                (ApprovalStatus::Timeout, ApprovalStatus::Timeout) => {}
+                _ => panic!("Approval status mismatch"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_approval_trigger_serialization() {
+        let triggers = vec![
+            (ApprovalTrigger::ProductionEnvironment, "ProductionEnvironment"),
+            (ApprovalTrigger::CriticalGroup, "CriticalGroup"),
+            (ApprovalTrigger::HighRiskCommand, "HighRiskCommand"),
+            (ApprovalTrigger::TargetCountThreshold, "TargetCountThreshold"),
+            (ApprovalTrigger::CustomRule, "CustomRule"),
+        ];
+
+        for (trigger, expected) in triggers {
+            let json = serde_json::to_string(&trigger).unwrap();
+            assert_eq!(json, format!("\"{}\"", expected));
+        }
+    }
+
+    #[test]
+    fn test_high_risk_command_detection() {
+        // 危险命令模式
+        let dangerous_commands = vec![
+            "rm -rf /",
+            "sudo rm -rf /var/log/*",
+            "dd if=/dev/zero of=/dev/sda",
+            "mkfs.ext4 /dev/sda1",
+            "shutdown -h now",
+            "reboot",
+            "format c:",
+            "del /q c:\\*.*",
+            ":(){ :|:& };:",
+            "truncate -s 0 /important/file",
+            "echo '' > /dev/null",
+        ];
+
+        for cmd in dangerous_commands {
+            assert!(
+                ApprovalService::is_high_risk_command_public(cmd),
+                "Command should be detected as high risk: {}",
+                cmd
+            );
+        }
+
+        // 安全命令
+        let safe_commands = vec![
+            "ls -la",
+            "echo hello",
+            "cat /etc/hosts",
+            "systemctl status nginx",
+            "docker ps",
+            "kubectl get pods",
+            "git status",
+        ];
+
+        for cmd in safe_commands {
+            assert!(
+                !ApprovalService::is_high_risk_command_public(cmd),
+                "Command should NOT be detected as high risk: {}",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_high_risk_command_case_insensitive() {
+        let commands = vec![
+            "RM -RF /",
+            "ShUtDoWn -h now",
+            "ReBoOt",
+            "DD IF=/dev/zero",
+            "MKFS /dev/sda1",
+        ];
+
+        for cmd in commands {
+            assert!(
+                ApprovalService::is_high_risk_command_public(cmd),
+                "Command (mixed case) should be detected as high risk: {}",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_approval_request_request() {
+        let request = CreateApprovalRequestRequest {
+            job_id: Some(Uuid::new_v4()),
+            request_type: "job_execution".to_string(),
+            title: "Deploy to Production".to_string(),
+            description: Some("Deploy new version to production servers".to_string()),
+            triggers: vec![
+                ApprovalTrigger::ProductionEnvironment,
+                ApprovalTrigger::HighRiskCommand,
+            ],
+            required_approvers: 2,
+            approval_group_id: Some(Uuid::new_v4()),
+            timeout_mins: Some(60),
+            metadata: serde_json::json!({"environment": "production", "risk_level": "high"}),
+        };
+
+        assert_eq!(request.request_type, "job_execution");
+        assert_eq!(request.title, "Deploy to Production");
+        assert_eq!(request.required_approvers, 2);
+        assert_eq!(request.triggers.len(), 2);
+    }
+
+    #[test]
+    fn test_approve_request_request() {
+        let approve = ApproveRequestRequest {
+            decision: ApprovalStatus::Approved,
+            comment: Some("Looks good, proceed".to_string()),
+        };
+
+        assert_eq!(approve.decision, ApprovalStatus::Approved);
+        assert_eq!(approve.comment, Some("Looks good, proceed".to_string()));
+
+        let reject = ApproveRequestRequest {
+            decision: ApprovalStatus::Rejected,
+            comment: Some("Need more testing".to_string()),
+        };
+
+        assert_eq!(reject.decision, ApprovalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_approval_list_filters() {
+        let filters = ApprovalListFilters {
+            status: Some(ApprovalStatus::Pending),
+            requested_by: Some(Uuid::new_v4()),
+            date_from: Some(Utc::now()),
+            date_to: Some(Utc::now()),
+        };
+
+        assert_eq!(filters.status, Some(ApprovalStatus::Pending));
+        assert!(filters.requested_by.is_some());
+        assert!(filters.date_from.is_some());
+        assert!(filters.date_to.is_some());
+    }
+
+    #[test]
+    fn test_create_job_template_request() {
+        let request = CreateJobTemplateRequest {
+            name: "Deploy Application".to_string(),
+            description: Some("Standard deployment template".to_string()),
+            template_type: "command".to_string(),
+            template_content: "kubectl apply -f deployment.yaml".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string"}
+                }
+            }),
+            default_timeout_secs: Some(600),
+            default_retry_times: Some(2),
+            default_concurrent_limit: Some(5),
+            risk_level: "medium".to_string(),
+            requires_approval: true,
+            applicable_environments: vec!["production".to_string(), "staging".to_string()],
+            applicable_groups: vec![Uuid::new_v4()],
+        };
+
+        assert_eq!(request.name, "Deploy Application");
+        assert_eq!(request.risk_level, "medium");
+        assert!(request.requires_approval);
+        assert_eq!(request.applicable_environments.len(), 2);
+    }
+
+    #[test]
+    fn test_update_job_template_request() {
+        let request = UpdateJobTemplateRequest {
+            name: Some("Updated Name".to_string()),
+            description: None,
+            template_content: None,
+            parameters_schema: None,
+            default_timeout_secs: Some(900),
+            default_retry_times: None,
+            default_concurrent_limit: None,
+            risk_level: Some("high".to_string()),
+            requires_approval: Some(false),
+            applicable_environments: None,
+            applicable_groups: None,
+            is_active: Some(true),
+        };
+
+        assert_eq!(request.name, Some("Updated Name".to_string()));
+        assert_eq!(request.risk_level, Some("high".to_string()));
+        assert_eq!(request.is_active, Some(true));
+    }
+
+    #[test]
+    fn test_execute_template_job_request() {
+        let request = ExecuteTemplateJobRequest {
+            template_id: Uuid::new_v4(),
+            parameters: serde_json::json!({"namespace": "production", "replicas": 3}),
+            target_hosts: vec![Uuid::new_v4(), Uuid::new_v4()],
+            target_groups: vec![],
+            tags: vec!["deploy".to_string()],
+        };
+
+        assert_eq!(request.target_hosts.len(), 2);
+        assert_eq!(request.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_create_approval_group_request() {
+        let request = CreateApprovalGroupRequest {
+            name: "Production Approvers".to_string(),
+            description: Some("Team that approves production deployments".to_string()),
+            member_ids: vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()],
+            required_approvals: 2,
+            scope: Some("production".to_string()),
+            priority: Some(10),
+        };
+
+        assert_eq!(request.name, "Production Approvers");
+        assert_eq!(request.member_ids.len(), 3);
+        assert_eq!(request.required_approvals, 2);
+        assert_eq!(request.priority, Some(10));
+    }
+
+    #[test]
+    fn test_approval_statistics() {
+        let stats = ApprovalStatistics {
+            total_requests: 100,
+            pending_requests: 10,
+            approved_requests: 80,
+            rejected_requests: 8,
+            timeout_requests: 2,
+            avg_approval_time_mins: Some(15.5),
+        };
+
+        assert_eq!(stats.total_requests, 100);
+        assert_eq!(stats.approved_requests, 80);
+        assert_eq!(stats.avg_approval_time_mins, Some(15.5));
+
+        // 验证总和
+        let completed = stats.approved_requests + stats.rejected_requests + stats.timeout_requests;
+        assert_eq!(completed + stats.pending_requests, stats.total_requests);
+    }
+
+    #[test]
+    fn test_approval_request_model() {
+        let request = ApprovalRequest {
+            id: Uuid::new_v4(),
+            job_id: Some(Uuid::new_v4()),
+            request_type: "job_execution".to_string(),
+            title: "Test Approval".to_string(),
+            description: Some("Test description".to_string()),
+            triggers: Json(vec![ApprovalTrigger::HighRiskCommand]),
+            required_approvers: 1,
+            approval_group_id: None,
+            status: ApprovalStatus::Pending,
+            current_approvals: 0,
+            requested_by: Uuid::new_v4(),
+            requested_at: Utc::now(),
+            timeout_mins: Some(30),
+            expires_at: Some(Utc::now()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+            metadata: Json(serde_json::json!({})),
+        };
+
+        assert_eq!(request.status, ApprovalStatus::Pending);
+        assert_eq!(request.current_approvals, 0);
+        assert_eq!(request.required_approvers, 1);
+    }
+
+    #[test]
+    fn test_approval_record_model() {
+        let record = ApprovalRecord {
+            id: Uuid::new_v4(),
+            approval_request_id: Uuid::new_v4(),
+            approver_id: Uuid::new_v4(),
+            approver_name: "John Doe".to_string(),
+            decision: ApprovalStatus::Approved,
+            comment: Some("Approved".to_string()),
+            approved_at: Utc::now(),
+            created_at: Utc::now(),
+        };
+
+        assert_eq!(record.decision, ApprovalStatus::Approved);
+        assert_eq!(record.approver_name, "John Doe");
+        assert!(record.comment.is_some());
+    }
+
+    #[test]
+    fn test_approval_group_model() {
+        let group = ApprovalGroup {
+            id: Uuid::new_v4(),
+            name: "DevOps Team".to_string(),
+            description: Some("DevOps approval group".to_string()),
+            member_ids: Json(vec![Uuid::new_v4(), Uuid::new_v4()]),
+            required_approvals: 2,
+            scope: Some("all".to_string()),
+            priority: 5,
+            is_active: true,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        assert_eq!(group.name, "DevOps Team");
+        assert_eq!(group.member_ids.0.len(), 2);
+        assert!(group.is_active);
+    }
+
+    #[test]
+    fn test_job_template_model() {
+        let template = JobTemplate {
+            id: Uuid::new_v4(),
+            name: "Standard Deploy".to_string(),
+            description: Some("Standard deployment template".to_string()),
+            template_type: "command".to_string(),
+            template_content: "kubectl apply -f {{manifest}}".to_string(),
+            parameters_schema: Json(serde_json::json!({"type": "object"})),
+            default_timeout_secs: Some(600),
+            default_retry_times: Some(1),
+            default_concurrent_limit: Some(10),
+            risk_level: "medium".to_string(),
+            requires_approval: true,
+            applicable_environments: Json(vec!["production".to_string()]),
+            applicable_groups: Json(vec![]),
+            is_active: true,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        assert_eq!(template.name, "Standard Deploy");
+        assert!(template.requires_approval);
+        assert_eq!(template.risk_level, "medium");
+        assert!(template.template_content.contains("{{manifest}}"));
+    }
 }

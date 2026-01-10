@@ -2,7 +2,7 @@
 
 use crate::{
     auth::middleware::AuthContext, auth::password::PasswordHasher, error::AppError,
-    middleware::AppState, models::user::*,
+    middleware::AppState, models::user::*, services::audit_service::AuditAction,
 };
 use axum::{
     extract::{Path, State},
@@ -59,6 +59,19 @@ pub async fn create_user(
         .create(&req, &password_hash, auth_context.user_id)
         .await?;
 
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserCreate,
+            Some("user"),
+            Some(user.id),
+            Some(&format!("Created user: {}", user.username)),
+            None,
+        )
+        .await?;
+
     Ok(Json(json!({
         "message": "用户创建成功",
         "user": UserResponse::from(user)
@@ -105,6 +118,19 @@ pub async fn update_user(
         .await?
         .ok_or_else(|| AppError::not_found("User not found"))?;
 
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserUpdate,
+            Some("user"),
+            Some(user.id),
+            Some(&format!("Updated user: {}", user.username)),
+            None,
+        )
+        .await?;
+
     Ok(Json(json!({
         "message": "用户更新成功",
         "user": UserResponse::from(user)
@@ -128,8 +154,29 @@ pub async fn delete_user(
         return Err(AppError::BadRequest("不能删除自己的账户".to_string()));
     }
 
+    // 先获取用户信息用于审计日志
     let repo = crate::repository::UserRepository::new(state.db.clone());
+    let user = repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| AppError::not_found("User not found"))?;
+
+    let username = user.username.clone();
+
     repo.delete(id).await?;
+
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserDelete,
+            Some("user"),
+            Some(id),
+            Some(&format!("Deleted user: {}", username)),
+            None,
+        )
+        .await?;
 
     Ok(Json(json!({
         "message": "用户删除成功"
@@ -159,6 +206,19 @@ pub async fn change_password(
 
     // 更新密码
     repo.update_password(auth_context.user_id, &new_password_hash, false)
+        .await?;
+
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserPasswordChange,
+            Some("user"),
+            Some(auth_context.user_id),
+            Some("User changed their password"),
+            None,
+        )
         .await?;
 
     Ok(Json(json!({

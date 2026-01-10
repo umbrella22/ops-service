@@ -1,12 +1,12 @@
 //! 健康检查处理器
-//! 提供 /health 和 /ready 端点
+//! 提供 /health、/ready 和 /system/concurrency 端点
 
 use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{db, middleware::AppState};
+use crate::{concurrency, db, middleware::AppState};
 
 /// 存活探针响应
 #[derive(Serialize)]
@@ -30,6 +30,12 @@ pub struct HealthCheck {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+/// 系统状态响应
+#[derive(Serialize)]
+pub struct SystemStatusResponse {
+    pub concurrency: concurrency::ConcurrencyStats,
 }
 
 /// 应用启动时间（需要在 main.rs 中设置）
@@ -95,4 +101,13 @@ pub async fn readiness_check(State(state): State<Arc<AppState>>) -> Json<Readine
         ready: all_healthy,
         checks,
     })
+}
+
+/// 获取并发状态
+/// 返回当前并发使用情况，用于监控和告警
+pub async fn get_concurrency_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<SystemStatusResponse> {
+    let stats = state.concurrency_controller.get_stats().await;
+    Json(SystemStatusResponse { concurrency: stats })
 }

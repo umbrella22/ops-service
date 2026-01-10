@@ -49,27 +49,67 @@ impl AuthService {
         // 检查账户状态
         self.check_account_status(&user)?;
 
-        // 验证密码
-        let hasher = PasswordHasher::new();
-        hasher.verify(&req.password, &user.password_hash)?;
-
-        // 检查账户是否被锁定
+        // 检查账户是否被临时锁定
         if let Some(locked_until) = user.locked_until {
             if locked_until > chrono::Utc::now() {
                 self.record_login_event(
-                    None,
-                    &req.username,
+                    Some(user.id),
+                    &user.username,
                     "login_failure",
                     Some("account_locked"),
                     client_ip,
                     user_agent,
                 )
                 .await;
-                return Err(AppError::BadRequest("账户已被临时锁定".to_string()));
+                return Err(AppError::BadRequest(format!(
+                    "账户已被临时锁定，请 {} 分钟后重试",
+                    (locked_until - chrono::Utc::now()).num_minutes().max(1)
+                )));
             }
         }
 
-        // 重置失败次数
+        // 验证密码
+        let hasher = PasswordHasher::new();
+        let password_valid = hasher.verify(&req.password, &user.password_hash);
+
+        if password_valid.is_err() {
+            // 密码错误，增加失败计数
+            let _ = user_repo.increment_failed_attempts(user.id).await;
+
+            // 记录失败事件
+            self.record_login_event(
+                Some(user.id),
+                &user.username,
+                "login_failure",
+                Some("invalid_password"),
+                client_ip,
+                user_agent,
+            )
+            .await;
+
+            // 检查是否需要锁定账户
+            let new_attempts = user.failed_login_attempts + 1;
+            if new_attempts >= 5 {
+                let locked_until = chrono::Utc::now() + chrono::Duration::minutes(30);
+                let _ = user_repo.lock_account(user.id, locked_until).await;
+
+                tracing::warn!(
+                    user_id = %user.id,
+                    username = %user.username,
+                    failed_attempts = new_attempts,
+                    "Account locked due to too many failed login attempts"
+                );
+
+                return Err(AppError::BadRequest(
+                    "密码错误次数过多，账户已被锁定 30 分钟".to_string(),
+                ));
+            }
+
+            // 返回错误，但不泄露是否用户存在
+            return Err(AppError::Unauthorized);
+        }
+
+        // 密码正确，重置失败次数
         if user.failed_login_attempts > 0 {
             let _ = user_repo.reset_failed_attempts(user.id).await;
         }
@@ -349,5 +389,31 @@ impl AuthService {
         // - 检查异常登录时间
 
         None
+    }
+
+    /// 解锁用户账户（管理员操作）
+    /// 重置失败登录次数并清除临时锁定状态
+    pub async fn unlock_account(&self, user_id: Uuid) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET
+                failed_login_attempts = 0,
+                locked_until = NULL,
+                status = CASE WHEN status = 'locked' THEN 'enabled' ELSE status END,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .execute(&self.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, user_id = %user_id, "Failed to unlock account");
+            AppError::database("Failed to unlock account")
+        })?;
+
+        tracing::info!(user_id = %user_id, "Account unlocked by administrator");
+        Ok(())
     }
 }

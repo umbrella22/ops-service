@@ -10,6 +10,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod models;
 pub mod output;
+pub mod rabbitmq;
 pub mod realtime;
 pub mod repository;
 pub mod routes;

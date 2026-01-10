@@ -7,7 +7,7 @@ use sqlx::types::Json;
 use uuid::Uuid;
 
 /// 审批状态
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "approval_status", rename_all = "snake_case")]
 pub enum ApprovalStatus {
     /// 待审批

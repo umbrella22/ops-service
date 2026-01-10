@@ -1,366 +1,306 @@
-# 数据库迁移指南
+# Ops-Service 数据库迁移脚本
 
-## 📋 目录
+本目录包含 Ops-Service 项目的 PostgreSQL 数据库迁移脚本。
 
-- [概述](#概述)
-- [迁移文件说明](#迁移文件说明)
-- [使用方法](#使用方法)
-- [数据库结构](#数据库结构)
-- [初始数据](#初始数据)
-- [最佳实践](#最佳实践)
-
-## 概述
-
-本项目使用 PostgreSQL 数据库，采用版本化的迁移脚本管理系统。每个迁移脚本都有唯一的版本号，确保数据库架构的可追溯性和可重复性。
-
-### 迁移文件命名规则
+## 目录结构
 
 ```
-<VVERSION>_<DESCRIPTION>.sql
+migrations/
+├── README.md                           # 本文件
+├── 000001_init_baseline.sql            # 基线表结构（健康检查）
+├── 000002_identity_and_audit.sql       # 身份、权限、资产、审计系统
+├── 000003_seed_data.sql                # 初始化示例数据
+├── 000004_job_system.sql               # 作业系统（SSH执行）和构建系统
+├── 000005_approval_system.sql          # 审批流系统
+├── 000006_security_enhancements.sql    # 安全增强功能
+├── 000007_host_credentials.sql         # 主机SSH凭据字段
+├── 000008_build_system.sql         # 构建系统P2.1更新
+└── 000009_runner_docker_config.sql     # Runner Docker配置管理
 ```
 
-例如：
-- `000001_init_baseline.sql` - 初始化基线表
-- `000002_p1_identity_and_audit.sql` - 身份认证和审计表
-- `000003_seed_data.sql` - 初始数据
+## 快速开始
 
-## 迁移文件说明
-
-### 1. `000001_init_baseline.sql` - 基线表
-
-**用途**: 创建基础健康检查表
-
-**内容**:
-```sql
--- 健康检查表（用于数据库连接测试）
-CREATE TABLE health_check (
-    id SERIAL PRIMARY KEY,
-    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-### 2. `000002_p1_identity_and_audit.sql` - 核心业务表
-
-**用途**: 创建所有核心业务表
-
-**包含的表**:
-
-#### 身份认证 (Identity)
-- `users` - 用户表（账户状态、安全策略）
-- `roles` - 角色表
-- `permissions` - 权限表（资源+操作）
-- `role_permissions` - 角色-权限关联表
-- `role_bindings` - 用户角色绑定（支持范围限制）
-- `api_keys` - API密钥（服务账户）
-- `refresh_tokens` - 刷新令牌（令牌轮换）
-
-#### 资产管理 (Assets)
-- `assets_groups` - 资产组（层级结构、环境感知）
-- `assets_hosts` - 主机资产
-
-#### 审计日志 (Audit)
-- `audit_logs` - 操作审计日志
-- `login_events` - 登录事件（安全监控）
-
-**特性**:
-- ✅ 自动时间戳更新 (`updated_at`)
-- ✅ 乐观锁版本控制 (`version`)
-- ✅ 自动审计触发器
-- ✅ 完整索引优化
-- ✅ 外键约束和级联规则
-
-## 使用方法
-
-### 🐳 方式一：Docker 部署（推荐）
-
-**适合**：快速部署、生产环境
+### 方式一：使用 psql 逐个执行
 
 ```bash
-# 启动服务（自动运行所有迁移）
-docker-compose up -d
+# 设置数据库连接信息
+export PGHOST=localhost
+export PGPORT=5432
+export PGUSER=postgres
+export PGDATABASE=ops_service
 
-# 查看迁移日志
-docker-compose logs api | grep migration
-
-# 查看数据库
-docker-compose exec postgres psql -U ops_user -d ops_service
+# 逐个执行迁移脚本（按文件名顺序）
+psql -f migrations/000001_init_baseline.sql
+psql -f migrations/000002_identity_and_audit.sql
+psql -f migrations/000003_seed_data.sql
+psql -f migrations/000004_job_system.sql
+psql -f migrations/000005_approval_system.sql
+psql -f migrations/000006_security_enhancements.sql
+psql -f migrations/000007_host_credentials.sql
+psql -f migrations/000008_build_system.sql
+psql -f migrations/000009_runner_docker_config.sql
 ```
 
-**优势**：
-- ✅ 零配置，自动完成所有迁移
-- ✅ 环境隔离，不影响主机
-- ✅ 自动加载种子数据
-
-详细说明：[QUICKSTART.md](QUICKSTART.md#方式一docker-部署推荐)
-
----
-
-### 🔧 方式二：Native 部署
-
-**适合**：开发环境、已有 PostgreSQL、需要定制化
-
-#### 方法 A：使用迁移管理脚本（推荐）
+### 方式二：一次性执行所有迁移
 
 ```bash
-# 查看迁移状态
-./scripts/migrate.sh status
-
-# 运行所有迁移
-./scripts/migrate.sh migrate
-
-# 加载种子数据（可选）
-./scripts/migrate.sh seed
-
-# 进入数据库
-./scripts/migrate.sh shell
+# 合并所有迁移文件并执行
+cat migrations/0*.sql | psql
 ```
 
-#### 方法 B：使用 sqlx-cli
+### 方式三：使用应用内置迁移
+
+如果应用配置了数据库迁移功能，启动服务时会自动执行：
 
 ```bash
-# 安装 sqlx-cli
-cargo install sqlx-cli --no-default-features --features rustls,postgres
-
-# 设置数据库 URL
-export DATABASE_URL="postgresql://postgres:password@localhost:5432/ops_service"
-
-# 运行迁移
-sqlx migrate run --source migrations
-
-# 查看状态
-sqlx migrate info --database-url $DATABASE_URL
+cd /home/ikaros/ops-system/ops-service
+cargo run --bin ops-service
 ```
 
-#### 方法 C：使用 psql 手动执行
+## 脚本说明
 
-```bash
-# 连接到数据库
-psql -U postgres -d ops_service
+### 000001_init_baseline.sql
+**P0 阶段：基线表结构**
 
-# 按顺序执行迁移文件
-\i migrations/000001_init_baseline.sql
-\i migrations/000002_p1_identity_and_audit.sql
-\i migrations/000003_seed_data.sql  -- 可选
-```
+创建基础的健康检查表，用于验证数据库连接。
 
-#### 方法 D：应用自动迁移
+| 表名 | 说明 |
+|------|------|
+| `health_check` | 健康检查测试表 |
 
-```bash
-# 设置环境变量
-export OPS_DATABASE__URL="postgresql://user:pass@localhost:5432/ops_service"
+### 000002_identity_and_audit.sql
+**P1 阶段：身份、权限、资产与审计**
 
-# 启动应用（自动运行未执行的迁移）
-./ops-system
-```
+创建核心的身份认证、RBAC权限管理、资产管理和审计日志系统。
 
-详细说明：[QUICKSTART.md](QUICKSTART.md#方式二native-部署)
-
-## 数据库结构
-
-### 表关系图
-
-```
-users (用户)
-  ├── role_bindings (角色绑定) ←→ roles (角色)
-  │                              └── role_permissions (权限) ←→ permissions
-  ├── api_keys (API密钥)
-  ├── refresh_tokens (刷新令牌)
-  └── created_by ──────┐
-                       │
-assets_groups (资产组)  │
-  ├── parent_id (自引用)│
-  └── assets_hosts (主机资产)
-                          │
-login_events ─────────────┘
-audit_logs
-```
-
-### 主要字段说明
-
-#### users 表
-- `status`: 账户状态 (enabled/disabled/locked)
-- `failed_login_attempts`: 失败登录次数
-- `must_change_password`: 强制修改密码标志
-- `version`: 乐观锁版本号
-
-#### assets_hosts 表
-- `identifier`: 唯一标识符
-- `group_id`: 所属资产组
-- `environment`: 环境 (dev/stage/prod)
-- `tags`: JSONB 数组，支持标签搜索
-- `status`: 主机状态
-
-#### audit_logs 表
-- `subject_id`: 操作者 ID
-- `action`: 操作类型 (create/update/delete/execute)
-- `changes`: JSONB 格式的变更详情
-- `result`: 操作结果 (success/failure/partial)
-
-## 初始数据
-
-### 默认权限
-
-系统预置以下权限：
-
-| 资源 | 操作 | 说明 |
+| 域 | 表名 | 说明 |
 |------|------|------|
-| asset | read | 查看资产和组 |
-| asset | write | 创建、更新、删除资产 |
-| job | read | 查看任务和作业 |
-| job | execute | 执行任务 |
-| job | approve | 批准生产环境任务 |
-| audit | read | 查看审计日志 |
-| audit | admin | 系统级审计访问 |
-| user | read | 查看用户信息 |
-| user | write | 管理用户和角色 |
-| system | admin | 系统管理 |
+| 身份 | `users` | 用户表（含状态机、安全策略） |
+| 身份 | `roles` | 角色表 |
+| 身份 | `permissions` | 权限表（资源+操作） |
+| 身份 | `role_permissions` | 角色-权限关联表 |
+| 身份 | `role_bindings` | 用户-角色绑定（支持范围） |
+| 身份 | `api_keys` | API密钥表 |
+| 身份 | `refresh_tokens` | 刷新令牌表 |
+| 资产 | `assets_groups` | 资产组（层级、环境感知） |
+| 资产 | `assets_hosts` | 主机资产 |
+| 审计 | `audit_logs` | 审计日志 |
+| 审计 | `login_events` | 登录事件 |
 
-### 默认角色
+**默认账户：**
+- 用户名: `admin`
+- 密码: `Admin123!`
+- 首次登录后需修改密码
 
-| 角色名 | 说明 | 权限 |
+### 000003_seed_data.sql
+**初始化示例数据**
+
+提供快速开始所需的示例数据，包括测试用户、资产组、示例主机等。
+
+**默认账户：**
+| 用户名 | 密码 | 角色 |
 |--------|------|------|
-| admin | 系统管理员 | 全部权限 |
-| operator | 操作员 | 读取+执行权限 |
-| viewer | 查看者 | 仅读取权限 |
-| auditor | 审计员 | 审计日志读取 |
+| `admin` | `Admin123!` | 管理员 |
+| `demo` | `Demo123!` | 操作员 |
+| `john.doe` | `Demo123!` | 测试用户 |
+| `jane.smith` | `Demo123!` | 测试用户 |
+| `bob.wilson` | `Demo123!` | 测试用户 |
 
-### 默认管理员账户
+### 000004_job_system.sql
+**P2 阶段：作业系统与构建系统**
 
-```
-用户名: admin
-邮箱: admin@ops-system.local
-密码: Admin123!
-状态: 启用，首次登录需修改密码
-```
+创建作业执行和CI/CD构建相关的表结构。
 
-**安全提示**: 生产环境请立即修改默认密码！
+| 域 | 表名 | 说明 |
+|------|------|------|
+| 作业 | `jobs` | 顶层作业概念 |
+| 作业 | `tasks` | 单主机执行任务 |
+| 构建 | `build_jobs` | 构建作业 |
+| 构建 | `build_steps` | 构建步骤 |
+| 构建 | `build_artifacts` | 构建产物 |
+| 构建 | `artifact_downloads` | 产物下载记录 |
+| 执行器 | `runners` | 构建执行器 |
 
-## 最佳实践
+**自定义类型：**
+- `job_type`: `command`, `script`, `build`
+- `job_status`: `pending`, `running`, `completed`, `failed`, `cancelled`, `partially_succeeded`
+- `task_status`: `pending`, `running`, `succeeded`, `failed`, `timeout`, `cancelled`
+- `build_type`: `node`, `java`, `rust`, `frontend`, `other`
 
-### 1. 迁移脚本编写规则
+### 000005_approval_system.sql
+**P3 阶段：审批流系统**
 
-- ✅ 使用 `IF NOT EXISTS` 确保幂等性
-- ✅ 每个迁移文件只做一件事
-- ✅ 添加详细的注释说明
-- ✅ 使用事务确保原子性
-- ❌ 避免修改已存在的迁移文件
+实现作业审批流程管理。
 
-### 2. 创建新迁移
+| 表名 | 说明 |
+|------|------|
+| `approval_groups` | 审批组 |
+| `approval_requests` | 审批请求 |
+| `approval_records` | 审批记录 |
+| `job_templates` | 作业模板 |
 
-```bash
-# 使用 sqlx-cli 创建新迁移
-sqlx migrate add add_user_preferences_table
-```
+### 000006_security_enhancements.sql
+**P3 阶段：安全增强**
 
-这会创建两个文件：
-- `migrations/XXXXXX_add_user_preferences_table.up.sql`
-- `migrations/XXXXXX_add_user_preferences_table.down.sql`
+为资产组添加关键分组标记，关键分组的作业操作需要审批。
 
-### 3. 索引优化
+### 000007_host_credentials.sql
+**主机SSH凭据**
 
-- 为常查询字段创建索引
-- JSONB 字段使用 GIN 索引
-- 复合索引注意字段顺序
+为主机表添加SSH认证凭据字段，支持密码和私钥认证。
 
-```sql
--- 示例：为标签字段创建 GIN 索引
-CREATE INDEX idx_assets_hosts_tags ON assets_hosts USING GIN(tags);
+### 000008_build_system.sql
+**P2.1 阶段：构建系统更新**
 
--- 示例：复合索引
-CREATE INDEX idx_audit_logs_subject_time
-ON audit_logs(subject_id, occurred_at DESC);
-```
+更新构建系统表结构，支持独立构建任务和更多配置选项。
 
-### 4. 审计触发器
+### 000009_runner_docker_config.sql
+**Runner Docker配置管理**
 
-系统为关键表配置了自动审计触发器：
+创建Docker配置管理表，支持通过Web界面管理Runner的Docker配置。
 
-```sql
--- assets_hosts 表的审计会在 INSERT/UPDATE/DELETE 时自动记录
--- 审计记录包括：操作者、操作类型、变更内容、时间戳
-```
+| 表名 | 说明 |
+|------|------|
+| `runner_docker_configs` | Docker配置 |
+| `runner_config_history` | 配置变更历史 |
 
-### 5. 数据库备份
+## 验证安装
 
-```bash
-# 备份数据库
-pg_dump -U postgres -d ops_service -F c -f backup_$(date +%Y%m%d).dump
-
-# 恢复数据库
-pg_restore -U postgres -d ops_service backup.dump
-```
-
-### 6. 性能监控
+### 检查表是否创建成功
 
 ```sql
--- 查看慢查询
-SELECT query, mean_exec_time, calls
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 10;
-
--- 查看表大小
-SELECT
-    schemaname,
-    tablename,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+-- 查看所有表
+SELECT tablename
 FROM pg_tables
 WHERE schemaname = 'public'
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-
--- 查看索引使用情况
-SELECT
-    schemaname,
-    tablename,
-    indexname,
-    idx_scan as index_scans
-FROM pg_stat_user_indexes
-ORDER BY idx_scan ASC;
+ORDER BY tablename;
 ```
 
-## 常见问题
-
-### Q: 如何重置数据库？
-
-```bash
-# 删除所有表
-psql -U postgres -d ops_service -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-
-# 重新运行迁移
-sqlx migrate run --database-url $DATABASE_URL
-```
-
-### Q: 如何查看已执行的迁移？
-
-```bash
-sqlx migrate info --database-url $DATABASE_URL
-```
-
-或在数据库中查询：
+### 检查默认用户
 
 ```sql
-SELECT * FROM _sqlx_migrations ORDER BY version;
+-- 查看用户列表
+SELECT username, email, status, full_name
+FROM users
+ORDER BY created_at;
 ```
 
-### Q: 迁移失败怎么办？
+### 检查资产统计
 
-1. 查看错误信息确定失败原因
-2. 修复问题后，手动回滚：
-   ```bash
-   sqlx migrate revert --database-url $DATABASE_URL
-   ```
-3. 重新运行迁移
+```sql
+-- 查看主机统计视图
+SELECT * FROM v_host_stats;
+```
 
-### Q: 如何在生产环境安全执行迁移？
+## 常用查询
 
-1. **先在测试环境验证**
-2. **备份数据库**
-3. **使用事务确保可回滚**
-4. **分阶段执行（先只读迁移，再写入迁移）**
-5. **监控应用性能**
+### 获取用户权限
 
-## 参考资源
+```sql
+-- 获取指定用户的所有权限
+SELECT * FROM get_user_permissions('<user_id>');
+```
 
-- [PostgreSQL 文档](https://www.postgresql.org/docs/)
-- [SQLx 迁移文档](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli)
-- [数据库设计最佳实践](https://www.postgresql.org/docs/current/ddl-constraints.html)
+### 检查用户权限
+
+```sql
+-- 检查用户是否有特定权限
+SELECT check_permission('<user_id>', 'asset', 'read');
+```
+
+### 查看最近活动
+
+```sql
+-- 查看最近50条审计记录
+SELECT * FROM v_recent_activity;
+```
+
+## 回滚
+
+如需回滚数据库，请按以下顺序删除表（注意外键依赖）：
+
+```sql
+-- P3 阶段
+DROP TABLE IF EXISTS runner_config_history CASCADE;
+DROP TABLE IF EXISTS runner_docker_configs CASCADE;
+DROP TABLE IF EXISTS job_templates CASCADE;
+DROP TABLE IF EXISTS approval_records CASCADE;
+DROP TABLE IF EXISTS approval_requests CASCADE;
+DROP TABLE IF EXISTS approval_groups CASCADE;
+
+-- P2 阶段
+DROP TABLE IF EXISTS artifact_downloads CASCADE;
+DROP TABLE IF EXISTS build_artifacts CASCADE;
+DROP TABLE IF EXISTS build_steps CASCADE;
+DROP TABLE IF EXISTS build_jobs CASCADE;
+DROP TABLE IF EXISTS runners CASCADE;
+DROP TABLE IF EXISTS tasks CASCADE;
+DROP TABLE IF EXISTS jobs CASCADE;
+
+-- P1 阶段
+DROP TABLE IF EXISTS login_events CASCADE;
+DROP TABLE IF EXISTS audit_logs CASCADE;
+DROP TABLE IF EXISTS assets_hosts CASCADE;
+DROP TABLE IF EXISTS assets_groups CASCADE;
+DROP TABLE IF EXISTS refresh_tokens CASCADE;
+DROP TABLE IF EXISTS api_keys CASCADE;
+DROP TABLE IF EXISTS role_bindings CASCADE;
+DROP TABLE IF EXISTS role_permissions CASCADE;
+DROP TABLE IF EXISTS permissions CASCADE;
+DROP TABLE IF EXISTS roles CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+-- P0 阶段
+DROP TABLE IF EXISTS health_check CASCADE;
+
+-- 删除自定义类型
+DROP TYPE IF EXISTS approval_status CASCADE;
+DROP TYPE IF EXISTS failure_reason CASCADE;
+DROP TYPE IF EXISTS task_status CASCADE;
+DROP TYPE IF EXISTS job_status CASCADE;
+DROP TYPE IF EXISTS job_type CASCADE;
+DROP TYPE IF EXISTS step_status CASCADE;
+DROP TYPE IF EXISTS build_type CASCADE;
+DROP TYPE IF EXISTS runner_capability CASCADE;
+```
+
+## 故障排查
+
+### 问题：迁移脚本执行失败
+
+**可能原因：**
+1. 数据库连接配置错误
+2. 数据库用户权限不足
+3. 脚本执行顺序错误
+
+**解决方案：**
+```bash
+# 检查数据库连接
+psql -h localhost -U postgres -d postgres -c "SELECT version();"
+
+# 确保按数字顺序执行脚本
+ls migrations/*.sql | sort
+```
+
+### 问题：表或类型已存在
+
+脚本使用 `IF NOT EXISTS` 语法，重复执行是安全的。如需重新初始化：
+
+```bash
+# 先执行回滚操作，再重新执行迁移
+```
+
+## 注意事项
+
+1. **生产环境部署前：**
+   - 修改默认管理员密码
+   - 根据需要调整示例数据
+   - 配置适当的数据库备份
+
+2. **密码哈希：**
+   - 默认密码使用 Argon2id 哈希
+   - 生产环境建议使用更强的哈希参数
+
+3. **权限设置：**
+   - 确保数据库用户有创建表、索引、函数的权限
+   - 生产环境应使用最小权限原则

@@ -8,13 +8,15 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use ops_service::config::{
-    AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig, SshConfig,
+    AppConfig, ConcurrencyConfig, DatabaseConfig, LoggingConfig, RabbitMqConfig,
+    RunnerDockerConfig, SecurityConfig, ServerConfig, SshConfig,
 };
 use ops_service::db;
 use ops_service::handlers::health::health_check;
 use ops_service::middleware::AppState;
 use secrecy::Secret;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 /// 创建测试配置
@@ -53,6 +55,7 @@ fn create_test_config() -> AppConfig {
             rate_limit_rps: 1000,
             trust_proxy: false,
             allowed_ips: None,
+            runner_api_key: None,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -62,7 +65,27 @@ fn create_test_config() -> AppConfig {
             connect_timeout_secs: 10,
             handshake_timeout_secs: 10,
             command_timeout_secs: 300,
+            host_key_verification: "accept".to_string(),
+            known_hosts_file: None,
         },
+        concurrency: ConcurrencyConfig {
+            global_limit: 100,
+            group_limit: None,
+            environment_limit: None,
+            production_limit: None,
+            acquire_timeout_secs: 30,
+            strategy: "queue".to_string(),
+            queue_max_length: 1000,
+        },
+        rabbitmq: RabbitMqConfig {
+            amqp_url: Secret::new("amqp://localhost:5672".to_string()),
+            vhost: "/".to_string(),
+            build_exchange: "ops.build".to_string(),
+            runner_exchange: "ops.runner".to_string(),
+            pool_size: 5,
+            publish_timeout_secs: 10,
+        },
+        runner_docker: RunnerDockerConfig::default(),
     }
 }
 
@@ -93,7 +116,7 @@ async fn create_test_app_state() -> Arc<AppState> {
     // 创建 job_service
     let job_service = Arc::new(ops_service::services::JobService::new(
         pool.clone(),
-        concurrency_controller,
+        concurrency_controller.clone(),
         audit_service.clone(),
         config.ssh.clone(),
     ));
@@ -108,8 +131,16 @@ async fn create_test_app_state() -> Arc<AppState> {
         event_bus.clone(),
     ));
 
+    // 创建 runner_docker_config_cache
+    let runner_docker_config_cache = Arc::new(RwLock::new(config.runner_docker.clone()));
+
+    let runner_scheduler = Arc::new(ops_service::services::RunnerScheduler::new(pool.clone()));
+    let storage_service = Arc::new(ops_service::services::StorageService::new(
+        ops_service::services::StorageConfig::default(),
+    ));
+
     Arc::new(AppState {
-        config,
+        config: config.clone(),
         db: pool,
         auth_service,
         permission_service,
@@ -118,6 +149,16 @@ async fn create_test_app_state() -> Arc<AppState> {
         job_service,
         approval_service,
         event_bus,
+        concurrency_controller,
+        rate_limiter: Arc::new(ops_service::middleware::IpRateLimiter::new(
+            ops_service::middleware::RateLimitConfig::default(),
+        )),
+        rabbitmq_publisher: Arc::new(ops_service::rabbitmq::RabbitMqPublisherPool::new(
+            config.rabbitmq.clone(),
+        )),
+        runner_docker_config_cache,
+        runner_scheduler,
+        storage_service,
     })
 }
 

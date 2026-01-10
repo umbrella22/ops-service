@@ -70,7 +70,7 @@ CREATE INDEX idx_jobs_tags ON jobs USING GIN(tags);
 CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    host_id UUID NOT NULL REFERENCES assets_hosts(id) ON DELETE CASCADE,
 
     -- Status
     status task_status NOT NULL DEFAULT 'pending',

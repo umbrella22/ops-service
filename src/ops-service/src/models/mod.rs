@@ -10,4 +10,5 @@ pub mod auth;
 pub mod build;
 pub mod job;
 pub mod role;
+pub mod runner_config;
 pub mod user;

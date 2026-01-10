@@ -169,6 +169,7 @@ mod tests {
                 password_require_special: false,
                 max_login_attempts: 5,
                 login_lockout_duration_secs: 1800,
+                runner_api_key: None,
             },
             ssh: crate::config::SshConfig {
                 default_username: "root".to_string(),
@@ -178,7 +179,27 @@ mod tests {
                 connect_timeout_secs: 10,
                 handshake_timeout_secs: 10,
                 command_timeout_secs: 300,
+                host_key_verification: "accept".to_string(),
+                known_hosts_file: None,
             },
+            concurrency: crate::config::ConcurrencyConfig {
+                global_limit: 100,
+                group_limit: None,
+                environment_limit: None,
+                production_limit: None,
+                acquire_timeout_secs: 30,
+                strategy: "queue".to_string(),
+                queue_max_length: 1000,
+            },
+            rabbitmq: crate::config::RabbitMqConfig {
+                amqp_url: secrecy::Secret::new("amqp://localhost:5672".to_string()),
+                vhost: "/".to_string(),
+                build_exchange: "ops.build".to_string(),
+                runner_exchange: "ops.runner".to_string(),
+                pool_size: 5,
+                publish_timeout_secs: 10,
+            },
+            runner_docker: crate::config::RunnerDockerConfig::default(),
         };
 
         // Valid password

@@ -63,6 +63,9 @@ pub struct SecurityConfig {
     pub trust_proxy: bool,
     /// IP 白名单（可选）
     pub allowed_ips: Option<Vec<String>>,
+    /// Runner API Key（使用 Secret 包装，用于 Runner 注册和心跳鉴权）
+    #[serde(default)]
+    pub runner_api_key: Option<Secret<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,6 +84,17 @@ pub struct SshConfig {
     pub handshake_timeout_secs: u64,
     /// 命令执行默认超时（秒）
     pub command_timeout_secs: u64,
+    /// 主机密钥验证策略（strict/accept/disabled）
+    #[serde(default = "default_host_key_verification")]
+    pub host_key_verification: String,
+    /// known_hosts 文件路径（可选）
+    #[serde(default)]
+    pub known_hosts_file: Option<String>,
+}
+
+/// 默认主机密钥验证策略：accept（首次连接时接受新密钥）
+fn default_host_key_verification() -> String {
+    "accept".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +104,232 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     pub security: SecurityConfig,
     pub ssh: SshConfig,
+    pub concurrency: ConcurrencyConfig,
+    pub rabbitmq: RabbitMqConfig,
+    /// Runner Docker 配置
+    #[serde(default)]
+    pub runner_docker: RunnerDockerConfig,
+}
+
+/// 并发控制配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConcurrencyConfig {
+    /// 全局并发上限
+    pub global_limit: i32,
+    /// 每分组并发上限
+    pub group_limit: Option<i32>,
+    /// 每环境并发上限
+    pub environment_limit: Option<i32>,
+    /// 生产环境更严格的并发限制
+    pub production_limit: Option<i32>,
+    /// 获取许可的超时时间（秒）
+    pub acquire_timeout_secs: u64,
+    /// 超限时的处理策略（reject/wait/queue）
+    pub strategy: String,
+    /// 排队策略的最大队列长度
+    pub queue_max_length: usize,
+}
+
+/// RabbitMQ 配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct RabbitMqConfig {
+    /// AMQP 连接 URL
+    pub amqp_url: Secret<String>,
+    /// Virtual host
+    #[serde(default = "default_rabbitmq_vhost")]
+    pub vhost: String,
+    /// 构建任务交换机
+    #[serde(default = "default_build_exchange")]
+    pub build_exchange: String,
+    /// Runner 交换机
+    #[serde(default = "default_runner_exchange")]
+    pub runner_exchange: String,
+    /// 连接池大小
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
+    /// 发布确认超时（秒）
+    #[serde(default = "default_publish_timeout")]
+    pub publish_timeout_secs: u64,
+}
+
+/// Runner Docker 配置（从控制面分发给 Runner）
+#[derive(Debug, Clone, Deserialize)]
+pub struct RunnerDockerConfig {
+    /// 是否启用 Docker 执行
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// 默认 Docker 镜像
+    #[serde(default = "default_runner_docker_image")]
+    pub default_image: String,
+
+    /// 按构建类型指定的镜像
+    #[serde(default)]
+    pub images_by_type: std::collections::HashMap<String, String>,
+
+    /// 内存限制（GB）
+    #[serde(default)]
+    pub memory_limit_gb: Option<i64>,
+
+    /// CPU 份额
+    #[serde(default)]
+    pub cpu_shares: Option<i64>,
+
+    /// 最大进程数
+    #[serde(default)]
+    pub pids_limit: Option<i64>,
+
+    /// 默认超时（秒）
+    #[serde(default = "default_runner_docker_timeout")]
+    pub default_timeout_secs: u64,
+
+    /// 按 Runner 名称的配置覆盖
+    #[serde(default)]
+    pub per_runner: std::collections::HashMap<String, RunnerDockerOverride>,
+
+    /// 按能力标签的配置覆盖
+    #[serde(default)]
+    pub per_capability: std::collections::HashMap<String, RunnerDockerOverride>,
+}
+
+/// 单个 Runner 的 Docker 配置覆盖
+#[derive(Debug, Clone, Deserialize)]
+pub struct RunnerDockerOverride {
+    /// 覆盖是否启用
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    /// 覆盖默认镜像
+    #[serde(default)]
+    pub default_image: Option<String>,
+
+    /// 覆盖内存限制（GB）
+    #[serde(default)]
+    pub memory_limit_gb: Option<i64>,
+
+    /// 覆盖 CPU 份额
+    #[serde(default)]
+    pub cpu_shares: Option<i64>,
+
+    /// 覆盖最大进程数
+    #[serde(default)]
+    pub pids_limit: Option<i64>,
+
+    /// 覆盖超时（秒）
+    #[serde(default)]
+    pub default_timeout_secs: Option<u64>,
+}
+
+impl RunnerDockerConfig {
+    /// 获取指定 Runner 的配置（考虑名称和能力标签的覆盖）
+    pub fn get_config_for_runner(
+        &self,
+        runner_name: &str,
+        capabilities: &[String],
+    ) -> RunnerDockerEffectiveConfig {
+        let mut config = RunnerDockerEffectiveConfig {
+            enabled: self.enabled,
+            default_image: self.default_image.clone(),
+            memory_limit_gb: self.memory_limit_gb,
+            cpu_shares: self.cpu_shares,
+            pids_limit: self.pids_limit,
+            default_timeout_secs: self.default_timeout_secs,
+        };
+
+        // 优先级：Runner 名称 > 能力标签 > 默认配置
+
+        // 首先应用按能力标签的覆盖
+        for capability in capabilities {
+            if let Some(override_cfg) = self.per_capability.get(capability) {
+                override_cfg.apply_to(&mut config);
+            }
+        }
+
+        // 然后应用按 Runner 名称的覆盖（优先级更高）
+        if let Some(override_cfg) = self.per_runner.get(runner_name) {
+            override_cfg.apply_to(&mut config);
+        }
+
+        config
+    }
+}
+
+impl RunnerDockerOverride {
+    fn apply_to(&self, config: &mut RunnerDockerEffectiveConfig) {
+        if let Some(enabled) = self.enabled {
+            config.enabled = enabled;
+        }
+        if let Some(ref image) = self.default_image {
+            config.default_image = image.clone();
+        }
+        if let Some(memory) = self.memory_limit_gb {
+            config.memory_limit_gb = Some(memory);
+        }
+        if let Some(cpu) = self.cpu_shares {
+            config.cpu_shares = Some(cpu);
+        }
+        if let Some(pids) = self.pids_limit {
+            config.pids_limit = Some(pids);
+        }
+        if let Some(timeout) = self.default_timeout_secs {
+            config.default_timeout_secs = timeout;
+        }
+    }
+}
+
+/// 应用覆盖后的有效配置
+#[derive(Debug, Clone)]
+pub struct RunnerDockerEffectiveConfig {
+    pub enabled: bool,
+    pub default_image: String,
+    pub memory_limit_gb: Option<i64>,
+    pub cpu_shares: Option<i64>,
+    pub pids_limit: Option<i64>,
+    pub default_timeout_secs: u64,
+}
+
+fn default_runner_docker_image() -> String {
+    "ubuntu:22.04".to_string()
+}
+
+fn default_runner_docker_timeout() -> u64 {
+    1800
+}
+
+impl Default for RunnerDockerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_image: default_runner_docker_image(),
+            images_by_type: std::collections::HashMap::new(),
+            memory_limit_gb: Some(4),
+            cpu_shares: Some(1024),
+            pids_limit: Some(1024),
+            default_timeout_secs: default_runner_docker_timeout(),
+            per_runner: std::collections::HashMap::new(),
+            per_capability: std::collections::HashMap::new(),
+        }
+    }
+}
+
+fn default_rabbitmq_vhost() -> String {
+    "/".to_string()
+}
+
+fn default_build_exchange() -> String {
+    "ops.build".to_string()
+}
+
+fn default_runner_exchange() -> String {
+    "ops.runner".to_string()
+}
+
+fn default_pool_size() -> u32 {
+    5
+}
+
+fn default_publish_timeout() -> u64 {
+    10
 }
 
 impl AppConfig {
@@ -124,7 +364,22 @@ impl AppConfig {
             .set_default("ssh.default_password", "")?
             .set_default("ssh.connect_timeout_secs", 10)?
             .set_default("ssh.handshake_timeout_secs", 10)?
-            .set_default("ssh.command_timeout_secs", 300)?;
+            .set_default("ssh.command_timeout_secs", 300)?
+            // 并发控制默认配置
+            .set_default("concurrency.global_limit", 50)?
+            .set_default("concurrency.group_limit", 10)?
+            .set_default("concurrency.environment_limit", 20)?
+            .set_default("concurrency.production_limit", 5)?
+            .set_default("concurrency.acquire_timeout_secs", 300)?
+            .set_default("concurrency.strategy", "wait")?
+            .set_default("concurrency.queue_max_length", 100)?
+            // RabbitMQ 默认配置
+            .set_default("rabbitmq.amqp_url", "amqp://guest:guest@localhost:5672/%2F")?
+            .set_default("rabbitmq.vhost", "/")?
+            .set_default("rabbitmq.build_exchange", "ops.build")?
+            .set_default("rabbitmq.runner_exchange", "ops.runner")?
+            .set_default("rabbitmq.pool_size", 5)?
+            .set_default("rabbitmq.publish_timeout_secs", 10)?;
 
         // 从环境变量加载配置（前缀为 OPS_）
         settings = settings.add_source(
@@ -217,6 +472,24 @@ impl AppConfig {
         if self.security.max_login_attempts < 1 || self.security.max_login_attempts > 20 {
             return Err(ConfigError::Message(
                 "max_login_attempts must be between 1 and 20".to_string(),
+            ));
+        }
+
+        // 验证并发策略
+        match self.concurrency.strategy.to_lowercase().as_str() {
+            "reject" | "wait" | "queue" => {}
+            _ => {
+                return Err(ConfigError::Message(format!(
+                    "Invalid concurrency strategy: {}. Must be one of: reject, wait, queue",
+                    self.concurrency.strategy
+                )))
+            }
+        }
+
+        // 验证并发限制
+        if self.concurrency.global_limit < 0 || self.concurrency.global_limit > 1000 {
+            return Err(ConfigError::Message(
+                "concurrency.global_limit must be between 0 and 1000".to_string(),
             ));
         }
 

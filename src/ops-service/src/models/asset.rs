@@ -57,6 +57,12 @@ pub struct Host {
     pub ssh_password: Option<String>,       // 加密存储
     pub ssh_private_key: Option<String>,    // 加密存储
     pub ssh_key_passphrase: Option<String>, // 加密存储
+    // SSH 主机密钥验证策略（新增）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_key_verification: Option<String>, // 存储为 "strict", "accept", "disabled"
+    // SSH known_hosts（新增，JSON 格式存储）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known_hosts: Option<Json<std::collections::HashMap<String, String>>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
@@ -87,6 +93,11 @@ pub struct CreateHostRequest {
     pub ssh_password: Option<String>,
     pub ssh_private_key: Option<String>,
     pub ssh_key_passphrase: Option<String>,
+    // SSH 主机密钥验证策略（可选）
+    #[serde(default)]
+    pub host_key_verification: Option<String>,
+    // SSH known_hosts（可选，JSON 格式）
+    pub known_hosts: Option<std::collections::HashMap<String, String>>,
 }
 
 fn default_port() -> i32 {
@@ -115,6 +126,10 @@ pub struct UpdateHostRequest {
     pub ssh_password: Option<String>,
     pub ssh_private_key: Option<String>,
     pub ssh_key_passphrase: Option<String>,
+    // SSH 主机密钥验证策略（可选）
+    pub host_key_verification: Option<String>,
+    // SSH known_hosts（可选，JSON 格式）
+    pub known_hosts: Option<std::collections::HashMap<String, String>>,
     pub version: i32, // For optimistic locking
 }
 

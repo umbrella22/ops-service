@@ -127,6 +127,22 @@ impl AppError {
     pub fn timeout(msg: &str) -> Self {
         AppError::Timeout(msg.to_string())
     }
+
+    /// 将错误转换为 SSH 失败原因分类（用于作业任务）
+    pub fn to_ssh_failure_reason(&self) -> crate::models::job::FailureReason {
+        match self {
+            AppError::SshAuthenticationError(_) => crate::models::job::FailureReason::AuthFailed,
+            AppError::SshConnectionError(msg)
+                if msg.contains("超时") || msg.contains("timeout") =>
+            {
+                crate::models::job::FailureReason::ConnectionTimeout
+            }
+            AppError::Timeout(_) => crate::models::job::FailureReason::ConnectionTimeout,
+            AppError::SshConnectionError(_) => crate::models::job::FailureReason::NetworkError,
+            AppError::SshExecutionError(_) => crate::models::job::FailureReason::CommandFailed,
+            _ => crate::models::job::FailureReason::Unknown,
+        }
+    }
 }
 
 /// 错误响应 DTO
@@ -206,6 +222,20 @@ mod tests {
 /// 从 ConcurrencyError 转换
 impl From<crate::concurrency::ConcurrencyError> for AppError {
     fn from(e: crate::concurrency::ConcurrencyError) -> Self {
-        AppError::Internal(format!("Concurrency error: {}", e))
+        match e {
+            crate::concurrency::ConcurrencyError::Rejected { .. }
+            | crate::concurrency::ConcurrencyError::LimitExceeded { .. } => {
+                AppError::RateLimitExceeded
+            }
+            crate::concurrency::ConcurrencyError::QueueFull { .. } => {
+                AppError::Internal("Concurrency queue is full".to_string())
+            }
+            crate::concurrency::ConcurrencyError::AcquireTimeout { .. } => {
+                AppError::Timeout("Acquiring concurrency permit timed out".to_string())
+            }
+            crate::concurrency::ConcurrencyError::Closed => {
+                AppError::Internal("Concurrency controller closed".to_string())
+            }
+        }
     }
 }

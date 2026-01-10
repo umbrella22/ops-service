@@ -4,7 +4,8 @@
 
 use ops_service::auth::password::PasswordHasher;
 use ops_service::config::{
-    AppConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ServerConfig, SshConfig,
+    AppConfig, ConcurrencyConfig, DatabaseConfig, LoggingConfig, RabbitMqConfig,
+    RunnerDockerConfig, SecurityConfig, ServerConfig, SshConfig,
 };
 use ops_service::models::asset::*;
 use ops_service::models::role::*;
@@ -53,6 +54,7 @@ fn create_test_config() -> AppConfig {
             rate_limit_rps: 1000,
             trust_proxy: false,
             allowed_ips: None,
+            runner_api_key: None,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -62,7 +64,27 @@ fn create_test_config() -> AppConfig {
             connect_timeout_secs: 10,
             handshake_timeout_secs: 10,
             command_timeout_secs: 300,
+            host_key_verification: "accept".to_string(),
+            known_hosts_file: None,
         },
+        concurrency: ConcurrencyConfig {
+            global_limit: 100,
+            group_limit: None,
+            environment_limit: None,
+            production_limit: None,
+            acquire_timeout_secs: 30,
+            strategy: "queue".to_string(),
+            queue_max_length: 1000,
+        },
+        rabbitmq: RabbitMqConfig {
+            amqp_url: Secret::new("amqp://localhost:5672".to_string()),
+            vhost: "/".to_string(),
+            build_exchange: "ops.build".to_string(),
+            runner_exchange: "ops.runner".to_string(),
+            pool_size: 5,
+            publish_timeout_secs: 10,
+        },
+        runner_docker: RunnerDockerConfig::default(),
     }
 }
 
@@ -496,6 +518,8 @@ async fn test_asset_repository_create_host() {
         ssh_password: None,
         ssh_private_key: None,
         ssh_key_passphrase: None,
+        host_key_verification: None,
+        known_hosts: None,
     };
 
     let host = repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
@@ -544,6 +568,8 @@ async fn test_asset_repository_list_hosts() {
             ssh_password: None,
             ssh_private_key: None,
             ssh_key_passphrase: None,
+            host_key_verification: None,
+            known_hosts: None,
         };
         repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
     }

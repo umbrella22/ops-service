@@ -17,7 +17,7 @@ tower-http = { version = "0.6", features = [
 ] }
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
-tokio = { version = "1.42", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 
 # 数据库
 sqlx = { version = "0.8", features = [
@@ -44,7 +44,7 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 
 # 工具
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
 anyhow = "1.0"
@@ -60,6 +60,7 @@ jsonwebtoken = "9.3"
 argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
+hex = "0.4"
 password-hash = "0.5"
 
 # SSH执行
@@ -75,6 +76,19 @@ validator = { version = "0.20", features = ["derive"] }
 
 # 指标
 metrics = "0.24"
+base64 = "0.22.1"
+
+# 限流
+dashmap = "6.1"
+
+# Common types
+common = { path = "../common" }
+
+# RabbitMQ
+lapin = "2.5"
+
+# S3 存储支持
+rust-s3 = { version = "0.34", features = ["fail-on-err"] }
 
 [dev-dependencies]
 tower-test = "0.4"

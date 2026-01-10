@@ -3,4 +3,8 @@
 
 pub mod executor;
 
-pub use executor::{ExecutionResult, SSHAuth, SSHClient, SSHConfig};
+// 重新导出 common 的类型
+pub use common::{execution::ExecutionResult, ssh::*};
+
+// 重新导出执行器
+pub use executor::SSHClient;

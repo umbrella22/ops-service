@@ -2,6 +2,7 @@
 
 use crate::{
     auth::middleware::AuthContext, error::AppError, middleware::AppState, models::auth::*,
+    services::audit_service::AuditAction,
 };
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::json;
@@ -51,6 +52,19 @@ pub async fn logout(
         .logout(&req.refresh_token, auth_context.user_id)
         .await?;
 
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserLogout,
+            Some("session"),
+            Some(auth_context.user_id),
+            Some("User logged out"),
+            None,
+        )
+        .await?;
+
     Ok(Json(json!({"message": "已成功登出"})))
 }
 
@@ -60,6 +74,19 @@ pub async fn logout_all(
     auth_context: AuthContext,
 ) -> Result<impl IntoResponse, AppError> {
     let revoked_count = state.auth_service.logout_all(auth_context.user_id).await?;
+
+    // 审计日志
+    state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            AuditAction::UserLogout,
+            Some("session"),
+            Some(auth_context.user_id),
+            Some(&format!("Logged out from all devices, revoked {} sessions", revoked_count)),
+            None,
+        )
+        .await?;
 
     Ok(Json(json!({
         "message": format!("已从 {} 个设备登出", revoked_count)
