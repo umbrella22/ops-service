@@ -72,8 +72,8 @@ async fn main() -> anyhow::Result<()> {
 
     let event_bus = std::sync::Arc::new(EventBus::new(1000));
 
-    // 初始化 IP 限流器
-    let rate_limiter = std::sync::Arc::new(IpRateLimiter::new(RateLimitConfig::default()));
+    // 初始化 IP 限流器（从 config.security.rate_limit_rps 加载配置）
+    let rate_limiter = std::sync::Arc::new(IpRateLimiter::new(RateLimitConfig::from_security_config(&config.security)));
 
     let approval_service = std::sync::Arc::new(ops_service::services::ApprovalService::new(
         db_pool.clone(),
@@ -139,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(addr = %addr, "Server listening");
 
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(shutdown_signal(
             config.server.graceful_shutdown_timeout_secs,
             consumer_handle,

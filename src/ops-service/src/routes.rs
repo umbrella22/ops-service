@@ -99,7 +99,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         approval_service,
         event_bus,
         concurrency_controller,
-        rate_limiter: Arc::new(IpRateLimiter::new(RateLimitConfig::default())),
+        rate_limiter: Arc::new(IpRateLimiter::new(RateLimitConfig::from_security_config(&state.config.security))),
         rabbitmq_publisher,
         runner_docker_config_cache,
         runner_scheduler,

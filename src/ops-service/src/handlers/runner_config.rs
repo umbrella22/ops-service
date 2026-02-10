@@ -14,12 +14,14 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
+    auth::middleware::AuthContext,
     error::{AppError, Result},
     middleware::AppState,
     models::runner_config::{
         RunnerConfigHistory, RunnerConfigHistoryResponse, RunnerConfigOverride, RunnerDockerConfig,
         RunnerDockerConfigListResponse, RunnerDockerConfigRequest, RunnerDockerConfigResponse,
     },
+    services::audit_service::AuditAction,
 };
 
 /// ==================== Request/Response ====================
@@ -122,6 +124,7 @@ pub async fn get_runner_config(
 /// 创建 Runner Docker 配置
 pub async fn create_runner_config(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Json(request): Json<RunnerDockerConfigRequest>,
 ) -> Result<impl IntoResponse> {
     // 验证请求
@@ -197,12 +200,26 @@ pub async fn create_runner_config(
         AppError::database("Failed to fetch created config")
     })?;
 
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::RunnerConfigCreate,
+            Some("runner_config"),
+            Some(id),
+            Some(&format!("Created runner config: {}", request.name)),
+            None,
+        )
+        .await;
+
     Ok((StatusCode::CREATED, Json::<RunnerDockerConfigResponse>(config.into())))
 }
 
 /// 更新 Runner Docker 配置
 pub async fn update_runner_config(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateRunnerDockerConfigRequest>,
 ) -> Result<impl IntoResponse> {
@@ -375,12 +392,26 @@ pub async fn update_runner_config(
         "Runner config updated"
     );
 
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::RunnerConfigUpdate,
+            Some("runner_config"),
+            Some(id),
+            Some(&format!("Updated runner config: {}, reason: {}", current.name, request.change_reason.as_deref().unwrap_or("N/A"))),
+            None,
+        )
+        .await;
+
     Ok(Json::<RunnerDockerConfigResponse>(new_config.into()))
 }
 
 /// 删除 Runner Docker 配置
 pub async fn delete_runner_config(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
     // 检查配置是否存在
@@ -411,6 +442,19 @@ pub async fn delete_runner_config(
         })?;
 
     info!(config_id = %id, name = %name, "Runner config deleted");
+
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::RunnerConfigDelete,
+            Some("runner_config"),
+            Some(id),
+            Some(&format!("Deleted runner config: {}", name)),
+            None,
+        )
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

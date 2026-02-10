@@ -87,23 +87,28 @@ impl AuthService {
             )
             .await;
 
-            // 检查是否需要锁定账户
+            // 检查是否需要锁定账户（使用配置值）
+            let max_attempts = self.config.security.max_login_attempts as i32;
+            let lockout_secs = self.config.security.login_lockout_duration_secs;
             let new_attempts = user.failed_login_attempts + 1;
-            if new_attempts >= 5 {
-                let locked_until = chrono::Utc::now() + chrono::Duration::minutes(30);
+            if new_attempts >= max_attempts {
+                let locked_until = chrono::Utc::now() + chrono::Duration::seconds(lockout_secs as i64);
                 let _ = user_repo.lock_account(user.id, locked_until).await;
 
                 tracing::warn!(
                     user_id = %user.id,
                     username = %user.username,
                     failed_attempts = new_attempts,
+                    lockout_duration_secs = lockout_secs,
                     "Account locked due to too many failed login attempts"
                 );
 
+                let lockout_minutes = (lockout_secs / 60).max(1);
                 return Err(AppError::BadRequest(
-                    "密码错误次数过多，账户已被锁定 30 分钟".to_string(),
+                    format!("密码错误次数过多，账户已被锁定 {} 分钟", lockout_minutes),
                 ));
             }
+
 
             // 返回错误，但不泄露是否用户存在
             return Err(AppError::Unauthorized);

@@ -278,19 +278,35 @@ pub async fn list_artifacts(
         .await
         .unwrap_or(false);
 
-    // 构建查询条件（使用 owned strings）
+    // 使用参数化查询，防止 SQL 注入
+    // 动态构建 WHERE 条件和对应的绑定参数
     let mut where_clauses: Vec<String> = vec!["1=1".to_string()];
+    let mut param_idx: u32 = 1;
+
+    // 收集所有绑定参数的值（使用统一类型包装）
+    #[derive(Debug)]
+    enum BindValue {
+        Uuid(Uuid),
+        Text(String),
+    }
+    let mut bind_values: Vec<BindValue> = Vec::new();
 
     if let Some(build_job_id) = query.build_job_id {
-        where_clauses.push(format!("build_job_id = '{}'", build_job_id));
+        where_clauses.push(format!("build_job_id = ${}", param_idx));
+        bind_values.push(BindValue::Uuid(build_job_id));
+        param_idx += 1;
     }
 
     if let Some(ref artifact_type) = query.artifact_type {
-        where_clauses.push(format!("artifact_type = '{}'", artifact_type));
+        where_clauses.push(format!("artifact_type = ${}", param_idx));
+        bind_values.push(BindValue::Text(artifact_type.clone()));
+        param_idx += 1;
     }
 
     if let Some(ref version) = query.version {
-        where_clauses.push(format!("version = '{}'", version));
+        where_clauses.push(format!("version = ${}", param_idx));
+        bind_values.push(BindValue::Text(version.clone()));
+        param_idx += 1;
     }
 
     // 非管理员只能看到公开产物或自己上传的产物
@@ -298,15 +314,24 @@ pub async fn list_artifacts(
         if query.public_only.unwrap_or(false) {
             where_clauses.push("is_public = true".to_string());
         } else {
-            where_clauses.push(format!("(is_public = true OR uploaded_by = '{}')", auth.user_id));
+            where_clauses.push(format!("(is_public = true OR uploaded_by = ${})", param_idx));
+            bind_values.push(BindValue::Uuid(auth.user_id));
+            param_idx += 1;
         }
     }
 
     let where_clause = where_clauses.join(" AND ");
 
-    // 计算总数
-    let count_query = format!("SELECT COUNT(*) FROM build_artifacts WHERE {}", where_clause);
-    let total: i64 = sqlx::query(&count_query)
+    // 计算总数（参数化）
+    let count_sql = format!("SELECT COUNT(*) FROM build_artifacts WHERE {}", where_clause);
+    let mut count_query = sqlx::query(&count_sql);
+    for val in &bind_values {
+        count_query = match val {
+            BindValue::Uuid(v) => count_query.bind(v),
+            BindValue::Text(v) => count_query.bind(v),
+        };
+    }
+    let total: i64 = count_query
         .fetch_one(&state.db)
         .await
         .map_err(|e| {
@@ -315,19 +340,32 @@ pub async fn list_artifacts(
         })?
         .get("count");
 
-    // 查询产物列表
-    let data_query = format!(
+    // 查询产物列表（参数化，LIMIT/OFFSET 也使用绑定参数）
+    let limit_param = param_idx;
+    param_idx += 1;
+    let offset_param = param_idx;
+
+    let data_sql = format!(
         "SELECT id, build_job_id, artifact_name, artifact_type, artifact_path,
                 artifact_size, artifact_hash, version, metadata, is_public, download_count,
                 created_at, uploaded_by
          FROM build_artifacts
          WHERE {}
          ORDER BY created_at DESC
-         LIMIT {} OFFSET {}",
-        where_clause, per_page, offset
+         LIMIT ${} OFFSET ${}",
+        where_clause, limit_param, offset_param
     );
 
-    let rows = sqlx::query(&data_query)
+    let mut data_query = sqlx::query(&data_sql);
+    for val in &bind_values {
+        data_query = match val {
+            BindValue::Uuid(v) => data_query.bind(v),
+            BindValue::Text(v) => data_query.bind(v),
+        };
+    }
+    data_query = data_query.bind(per_page as i64).bind(offset as i64);
+
+    let rows = data_query
         .fetch_all(&state.db)
         .await
         .map_err(|e| {

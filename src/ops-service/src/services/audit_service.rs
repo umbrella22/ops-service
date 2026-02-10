@@ -50,6 +50,11 @@ pub enum AuditAction {
     ApprovalGroupCreate,
     ApprovalGroupUpdate,
     ApprovalGroupDelete,
+
+    // Runner 配置相关
+    RunnerConfigCreate,
+    RunnerConfigUpdate,
+    RunnerConfigDelete,
 }
 
 impl AuditAction {
@@ -92,6 +97,10 @@ impl AuditAction {
             AuditAction::ApprovalGroupCreate => "approval_group.create",
             AuditAction::ApprovalGroupUpdate => "approval_group.update",
             AuditAction::ApprovalGroupDelete => "approval_group.delete",
+
+            AuditAction::RunnerConfigCreate => "runner_config.create",
+            AuditAction::RunnerConfigUpdate => "runner_config.update",
+            AuditAction::RunnerConfigDelete => "runner_config.delete",
         }
     }
 }

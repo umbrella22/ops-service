@@ -15,6 +15,7 @@ use crate::{
     error::{AppError, Result},
     middleware::AppState,
     models::approval::*,
+    services::audit_service::AuditAction,
 };
 
 /// 创建审批请求
@@ -27,6 +28,19 @@ pub async fn create_approval_request(
         .approval_service
         .create_approval_request(request, auth.user_id)
         .await?;
+
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::ApprovalCreate,
+            Some("approval"),
+            Some(approval.id),
+            Some("Created approval request"),
+            None,
+        )
+        .await;
 
     Ok((StatusCode::CREATED, Json(approval)))
 }
@@ -59,10 +73,34 @@ pub async fn approve_request(
     Path(id): Path<Uuid>,
     Json(request): Json<ApproveRequestRequest>,
 ) -> Result<impl IntoResponse> {
+    let is_approve = request.decision == crate::models::approval::ApprovalStatus::Approved;
     state
         .approval_service
-        .approve_request(id, auth.user_id, auth.username, request)
+        .approve_request(id, auth.user_id, auth.username.clone(), request)
         .await?;
+
+    // 审计日志
+    let action = if is_approve {
+        AuditAction::ApprovalApprove
+    } else {
+        AuditAction::ApprovalReject
+    };
+    let summary = if is_approve {
+        "Approved request"
+    } else {
+        "Rejected request"
+    };
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            action,
+            Some("approval"),
+            Some(id),
+            Some(summary),
+            None,
+        )
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -78,6 +116,19 @@ pub async fn cancel_approval_request(
         .cancel_approval_request(id, auth.user_id)
         .await?;
 
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::ApprovalCancel,
+            Some("approval"),
+            Some(id),
+            Some("Cancelled approval request"),
+            None,
+        )
+        .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -91,6 +142,19 @@ pub async fn create_approval_group(
         .approval_service
         .create_approval_group(request, auth.user_id)
         .await?;
+
+    // 审计日志
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth.user_id,
+            AuditAction::ApprovalGroupCreate,
+            Some("approval_group"),
+            Some(group.id),
+            Some("Created approval group"),
+            None,
+        )
+        .await;
 
     Ok((StatusCode::CREATED, Json(group)))
 }
@@ -217,3 +281,4 @@ pub async fn execute_template_job(
         .await?;
     Ok((StatusCode::CREATED, Json(job)))
 }
+
