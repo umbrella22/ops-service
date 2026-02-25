@@ -141,7 +141,7 @@ pub struct UpdateArtifactRequest {
     pub metadata: Option<serde_json::Value>,
 }
 
-/// ==================== 产物 API ====================
+// ==================== 产物 API ====================
 
 /// 记录产物元数据
 pub async fn record_artifact(
@@ -365,13 +365,10 @@ pub async fn list_artifacts(
     }
     data_query = data_query.bind(per_page as i64).bind(offset as i64);
 
-    let rows = data_query
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "Failed to list artifacts");
-            AppError::database("Failed to list artifacts")
-        })?;
+    let rows = data_query.fetch_all(&state.db).await.map_err(|e| {
+        error!(error = %e, "Failed to list artifacts");
+        AppError::database("Failed to list artifacts")
+    })?;
 
     let artifacts: Vec<ArtifactMetadata> = rows
         .iter()

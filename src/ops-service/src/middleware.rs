@@ -260,7 +260,10 @@ fn get_client_ip_with_addr(
     }
 
     // 5. 尝试从 ConnectInfo 获取对端 IP（由 axum::serve 注入的连接信息）
-    if let Some(connect_info) = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>() {
+    if let Some(connect_info) = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
         let addr = connect_info.0;
         tracing::debug!(client_ip = %addr.ip(), "Got IP from ConnectInfo");
         return Ok(addr.ip());
@@ -328,14 +331,14 @@ impl RateLimitConfig {
     pub fn from_security_config(security: &crate::config::SecurityConfig) -> Self {
         let rps = security.rate_limit_rps.max(1);
         Self {
-            max_requests: NonZeroU32::new((rps * 60) as u32).unwrap_or(NonZeroU32::new(100).unwrap()),
+            max_requests: NonZeroU32::new((rps * 60) as u32)
+                .unwrap_or(NonZeroU32::new(100).unwrap()),
             window_secs: NonZeroU32::new(60).unwrap(),
             login_max_requests: NonZeroU32::new(10).unwrap(),
             login_window_secs: NonZeroU32::new(300).unwrap(),
         }
     }
 }
-
 
 impl IpRateLimiter {
     /// 创建新的限流器

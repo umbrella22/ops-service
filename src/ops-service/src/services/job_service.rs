@@ -1847,10 +1847,8 @@ impl JobService {
         match config_str.to_lowercase().as_str() {
             "strict" => crate::ssh::HostKeyVerification::Strict,
             "disabled" => crate::ssh::HostKeyVerification::Disabled,
-            "accept" | _ => {
-                // 默认为 Accept 模式
-                crate::ssh::HostKeyVerification::Accept
-            }
+            "accept" => crate::ssh::HostKeyVerification::Accept,
+            _ => crate::ssh::HostKeyVerification::Accept,
         }
     }
 }

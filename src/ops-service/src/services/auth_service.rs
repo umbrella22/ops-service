@@ -92,7 +92,8 @@ impl AuthService {
             let lockout_secs = self.config.security.login_lockout_duration_secs;
             let new_attempts = user.failed_login_attempts + 1;
             if new_attempts >= max_attempts {
-                let locked_until = chrono::Utc::now() + chrono::Duration::seconds(lockout_secs as i64);
+                let locked_until =
+                    chrono::Utc::now() + chrono::Duration::seconds(lockout_secs as i64);
                 let _ = user_repo.lock_account(user.id, locked_until).await;
 
                 tracing::warn!(
@@ -104,11 +105,11 @@ impl AuthService {
                 );
 
                 let lockout_minutes = (lockout_secs / 60).max(1);
-                return Err(AppError::BadRequest(
-                    format!("密码错误次数过多，账户已被锁定 {} 分钟", lockout_minutes),
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "密码错误次数过多，账户已被锁定 {} 分钟",
+                    lockout_minutes
+                )));
             }
-
 
             // 返回错误，但不泄露是否用户存在
             return Err(AppError::Unauthorized);

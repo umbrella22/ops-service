@@ -128,10 +128,10 @@ pub async fn get_group(
         .await?;
 
     // 如果用户没有全局权限且资产组的环境不在允许列表中，返回 404
-    if !allowed_environments.contains(&"*".to_string()) {
-        if !allowed_environments.contains(&group.environment) {
-            return Err(AppError::not_found("Resource not found"));
-        }
+    if !allowed_environments.contains(&"*".to_string())
+        && !allowed_environments.contains(&group.environment)
+    {
+        return Err(AppError::not_found("Resource not found"));
     }
 
     Ok(Json(group))

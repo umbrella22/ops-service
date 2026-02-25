@@ -73,7 +73,9 @@ async fn main() -> anyhow::Result<()> {
     let event_bus = std::sync::Arc::new(EventBus::new(1000));
 
     // 初始化 IP 限流器（从 config.security.rate_limit_rps 加载配置）
-    let rate_limiter = std::sync::Arc::new(IpRateLimiter::new(RateLimitConfig::from_security_config(&config.security)));
+    let rate_limiter = std::sync::Arc::new(IpRateLimiter::new(
+        RateLimitConfig::from_security_config(&config.security),
+    ));
 
     let approval_service = std::sync::Arc::new(ops_service::services::ApprovalService::new(
         db_pool.clone(),

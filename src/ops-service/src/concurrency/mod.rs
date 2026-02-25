@@ -9,21 +9,16 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
 
 /// 并发策略：当达到并发上限时的处理方式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConcurrencyStrategy {
     /// 拒绝策略：立即返回错误，不等待
     Reject,
     /// 等待策略：等待指定时间后超时返回错误（默认）
+    #[default]
     Wait,
     /// 排队策略：将作业放入队列，等待有空闲时执行
     Queue,
-}
-
-impl Default for ConcurrencyStrategy {
-    fn default() -> Self {
-        Self::Wait
-    }
 }
 
 /// 并发许可（持有 semaphore 许可）

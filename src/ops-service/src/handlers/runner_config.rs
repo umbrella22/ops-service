@@ -24,7 +24,7 @@ use crate::{
     services::audit_service::AuditAction,
 };
 
-/// ==================== Request/Response ====================
+// ==================== Request/Response ====================
 
 /// 更新配置请求
 #[derive(Debug, Deserialize)]
@@ -71,7 +71,7 @@ pub struct SetActiveConfigRequest {
     pub config_id: Uuid,
 }
 
-/// ==================== Handler Functions ====================
+// ==================== Handler Functions ====================
 
 /// 获取所有 Runner Docker 配置
 pub async fn list_runner_configs(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
@@ -308,25 +308,25 @@ pub async fn update_runner_config(
     }
     if let Some(timeout) = request.default_timeout_secs {
         // 验证超时值
-        if timeout < 60 || timeout > 86400 {
+        if !(60..=86400).contains(&timeout) {
             return Err(AppError::validation("Timeout must be between 60 and 86400 seconds"));
         }
         query = query.bind(timeout);
     }
     if let Some(memory) = request.memory_limit_gb {
-        if memory < 1 || memory > 128 {
+        if !(1..=128).contains(&memory) {
             return Err(AppError::validation("Memory limit must be between 1 and 128 GB"));
         }
         query = query.bind(memory);
     }
     if let Some(cpu) = request.cpu_shares {
-        if cpu < 128 || cpu > 4096 {
+        if !(128..=4096).contains(&cpu) {
             return Err(AppError::validation("CPU shares must be between 128 and 4096"));
         }
         query = query.bind(cpu);
     }
     if let Some(pids) = request.pids_limit {
-        if pids < 64 || pids > 65536 {
+        if !(64..=65536).contains(&pids) {
             return Err(AppError::validation("PIDs limit must be between 64 and 65536"));
         }
         query = query.bind(pids);
@@ -400,7 +400,11 @@ pub async fn update_runner_config(
             AuditAction::RunnerConfigUpdate,
             Some("runner_config"),
             Some(id),
-            Some(&format!("Updated runner config: {}, reason: {}", current.name, request.change_reason.as_deref().unwrap_or("N/A"))),
+            Some(&format!(
+                "Updated runner config: {}, reason: {}",
+                current.name,
+                request.change_reason.as_deref().unwrap_or("N/A")
+            )),
             None,
         )
         .await;

@@ -233,24 +233,24 @@ impl RunnerDockerConfigRequest {
             return Err("Default image name too long (max 255 characters)".to_string());
         }
 
-        if self.default_timeout_secs < 60 || self.default_timeout_secs > 86400 {
+        if !(60..=86400).contains(&self.default_timeout_secs) {
             return Err("Default timeout must be between 60 and 86400 seconds".to_string());
         }
 
         if let Some(memory) = self.memory_limit_gb {
-            if memory < 1 || memory > 128 {
+            if !(1..=128).contains(&memory) {
                 return Err("Memory limit must be between 1 and 128 GB".to_string());
             }
         }
 
         if let Some(cpu) = self.cpu_shares {
-            if cpu < 128 || cpu > 4096 {
+            if !(128..=4096).contains(&cpu) {
                 return Err("CPU shares must be between 128 and 4096".to_string());
             }
         }
 
         if let Some(pids) = self.pids_limit {
-            if pids < 64 || pids > 65536 {
+            if !(64..=65536).contains(&pids) {
                 return Err("PIDs limit must be between 64 and 65536".to_string());
             }
         }

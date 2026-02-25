@@ -261,7 +261,7 @@ pub struct RunnerListResponse {
     pub total: i64,
 }
 
-/// ==================== Helper Functions ====================
+// ==================== Helper Functions ====================
 
 /// 从数据库获取 Runner Docker 配置
 /// 如果数据库中没有配置，回退到环境变量配置
@@ -324,7 +324,7 @@ async fn get_runner_docker_config(
         .get_config_for_runner(runner_name, capabilities)
 }
 
-/// ==================== Runner API ====================
+// ==================== Runner API ====================
 
 /// Runner 注册
 pub async fn register_runner(

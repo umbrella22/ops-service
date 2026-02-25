@@ -92,14 +92,7 @@ pub async fn approve_request(
     };
     let _ = state
         .audit_service
-        .log_action_simple(
-            auth.user_id,
-            action,
-            Some("approval"),
-            Some(id),
-            Some(summary),
-            None,
-        )
+        .log_action_simple(auth.user_id, action, Some("approval"), Some(id), Some(summary), None)
         .await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -281,4 +274,3 @@ pub async fn execute_template_job(
         .await?;
     Ok((StatusCode::CREATED, Json(job)))
 }
-

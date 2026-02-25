@@ -144,7 +144,8 @@ impl StorageService {
             .as_str()
         {
             "s3" => StorageType::S3,
-            "local" | _ => StorageType::Local,
+            "local" => StorageType::Local,
+            _ => StorageType::Local,
         };
 
         let local = LocalStorageConfig {

@@ -269,7 +269,7 @@ pub struct BuildJobSummary {
     pub created_by: Uuid,
 }
 
-/// ==================== 构建作业 API ====================
+// ==================== 构建作业 API ====================
 
 /// 创建构建作业
 pub async fn create_build_job(
@@ -898,7 +898,7 @@ pub async fn retry_build_job(
     ))
 }
 
-/// ==================== 辅助函数 ====================
+// ==================== 辅助函数 ====================
 
 /// 解析步骤类型
 fn parse_step_type(step_type: &str) -> StepType {
