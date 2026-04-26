@@ -1456,7 +1456,7 @@ impl JobService {
         template_id: Uuid,
     ) -> Result<crate::models::approval::JobTemplate> {
         sqlx::query_as::<_, crate::models::approval::JobTemplate>(
-            "SELECT * FROM job_templates WHERE id = $1",
+            "SELECT * FROM job_templates WHERE id = $1 AND is_active = true",
         )
         .bind(template_id)
         .fetch_one(&self.db)
@@ -1543,15 +1543,11 @@ impl JobService {
             count += 1;
             updates.push(format!("applicable_groups = ${}", count));
         }
-        if request.is_active.is_some() {
-            count += 1;
-            updates.push(format!("is_active = ${}", count));
-        }
 
         updates.push("updated_at = NOW()".to_string());
 
         let query = format!(
-            "UPDATE job_templates SET {} WHERE id = ${} RETURNING *",
+            "UPDATE job_templates SET {} WHERE id = ${} AND is_active = true RETURNING *",
             updates.join(", "),
             count + 1
         );
@@ -1590,9 +1586,6 @@ impl JobService {
         }
         if let Some(applicable_groups) = request.applicable_groups {
             q = q.bind(applicable_groups);
-        }
-        if let Some(is_active) = request.is_active {
-            q = q.bind(is_active);
         }
 
         q = q.bind(template_id);

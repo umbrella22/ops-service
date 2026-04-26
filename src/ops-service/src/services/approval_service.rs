@@ -858,12 +858,11 @@ mod tests {
             requires_approval: Some(false),
             applicable_environments: None,
             applicable_groups: None,
-            is_active: Some(true),
         };
 
         assert_eq!(request.name, Some("Updated Name".to_string()));
         assert_eq!(request.risk_level, Some("high".to_string()));
-        assert_eq!(request.is_active, Some(true));
+        assert_eq!(request.requires_approval, Some(false));
     }
 
     #[test]

@@ -213,6 +213,11 @@ pub async fn create_job_template(
     auth: AuthContext,
     Json(request): Json<CreateJobTemplateRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "execute", None, None)
+        .await?;
+
     let template = state
         .job_service
         .create_job_template(request, auth.user_id)
@@ -223,14 +228,28 @@ pub async fn create_job_template(
 /// 获取作业模板详情
 pub async fn get_job_template(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "read", None, None)
+        .await?;
+
     let template = state.job_service.get_job_template(id).await?;
     Ok(Json(template))
 }
 
 /// 查询作业模板列表
-pub async fn list_job_templates(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
+pub async fn list_job_templates(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "read", None, None)
+        .await?;
+
     let templates = state.job_service.list_job_templates().await?;
     Ok(Json(templates))
 }
@@ -242,6 +261,11 @@ pub async fn update_job_template(
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateJobTemplateRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "execute", None, None)
+        .await?;
+
     let template = state
         .job_service
         .update_job_template(id, request, auth.user_id)
@@ -256,6 +280,11 @@ pub async fn delete_job_template(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
     state
+        .permission_service
+        .require_permission(auth.user_id, "job", "execute", None, None)
+        .await?;
+
+    state
         .job_service
         .delete_job_template(id, auth.user_id)
         .await?;
@@ -268,6 +297,11 @@ pub async fn execute_template_job(
     auth: AuthContext,
     Json(request): Json<ExecuteTemplateJobRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "execute", None, None)
+        .await?;
+
     let job = state
         .job_service
         .create_job_from_template(request, auth.user_id)

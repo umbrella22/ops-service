@@ -224,7 +224,6 @@ pub struct UpdateJobTemplateRequest {
     pub requires_approval: Option<bool>,
     pub applicable_environments: Option<Vec<String>>,
     pub applicable_groups: Option<Vec<Uuid>>,
-    pub is_active: Option<bool>,
 }
 
 /// 创建审批组请求

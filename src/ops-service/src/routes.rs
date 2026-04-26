@@ -310,7 +310,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // 作业模板 (P3)
         .route(
             "/api/v1/job-templates",
-            post(handlers::approval::create_job_template)
+            get(handlers::approval::list_job_templates)
+                .post(handlers::approval::create_job_template)
+        )
+        .route(
+            "/api/v1/job-templates/{id}",
+            get(handlers::approval::get_job_template)
+                .put(handlers::approval::update_job_template)
+                .delete(handlers::approval::delete_job_template)
         )
         .route(
             "/api/v1/job-templates/execute",
