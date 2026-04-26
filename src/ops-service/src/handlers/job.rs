@@ -236,7 +236,7 @@ pub async fn get_job_tasks(
             .log_action_simple(
                 auth_context.user_id,
                 crate::services::audit_service::AuditAction::JobOutputView,
-                Some("jobs"),
+                Some("job"),
                 Some(job_id),
                 Some(&format!(
                     "Viewed task summary for {} tasks (output detail redacted)",
@@ -256,7 +256,7 @@ pub async fn get_job_tasks(
         .log_action_simple(
             auth_context.user_id,
             crate::services::audit_service::AuditAction::JobOutputView,
-            Some("jobs"),
+            Some("job"),
             Some(job_id),
             Some(&format!("Viewed output detail for {} tasks", tasks.len())),
             None,

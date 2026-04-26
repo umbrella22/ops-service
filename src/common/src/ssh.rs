@@ -2,7 +2,7 @@
 //!
 //! 统一的 SSH 配置定义，可被 ops-service 和 ops-runner 共享
 
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -171,13 +171,13 @@ pub struct SshConfigSettings {
     pub default_username: String,
 
     /// 默认 SSH 密码（使用 Secret 包装，防止日志泄露）
-    pub default_password: Secret<String>,
+    pub default_password: SecretString,
 
     /// 默认 SSH 私钥（可选，使用 Secret 包装）
-    pub default_private_key: Option<Secret<String>>,
+    pub default_private_key: Option<SecretString>,
 
     /// 私钥密码（可选，使用 Secret 包装）
-    pub private_key_passphrase: Option<Secret<String>>,
+    pub private_key_passphrase: Option<SecretString>,
 
     /// 连接超时（秒）
     #[serde(default = "default_connect_timeout")]
@@ -198,21 +198,21 @@ impl SshConfigSettings {
         if use_key {
             if let Some(ref key) = self.default_private_key {
                 SshAuth::Key {
-                    private_key: key.expose_secret().clone(),
+                    private_key: key.expose_secret().to_string(),
                     passphrase: self
                         .private_key_passphrase
                         .as_ref()
-                        .map(|p| p.expose_secret().clone()),
+                        .map(|p| p.expose_secret().to_string()),
                 }
             } else {
                 // 回退到密码认证
                 SshAuth::Password {
-                    password: self.default_password.expose_secret().clone(),
+                    password: self.default_password.expose_secret().to_string(),
                 }
             }
         } else {
             SshAuth::Password {
-                password: self.default_password.expose_secret().clone(),
+                password: self.default_password.expose_secret().to_string(),
             }
         }
     }

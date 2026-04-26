@@ -90,7 +90,7 @@ impl ApprovalService {
             .log_action_simple(
                 requested_by,
                 AuditAction::ApprovalCreate,
-                Some("approval_requests"),
+                Some("approval"),
                 Some(approval_id),
                 Some(&format!("Approval request: {}", request.title)),
                 None,
@@ -338,7 +338,7 @@ impl ApprovalService {
             .log_action_simple(
                 approver_id,
                 audit_action,
-                Some("approval_requests"),
+                Some("approval"),
                 Some(approval_id),
                 Some(&format!("Decision: {:?}", request.decision)),
                 None,
@@ -393,7 +393,7 @@ impl ApprovalService {
             .log_action_simple(
                 cancelled_by,
                 AuditAction::ApprovalCancel,
-                Some("approval_requests"),
+                Some("approval"),
                 Some(approval_id),
                 Some("Cancelled approval request"),
                 None,
@@ -444,7 +444,7 @@ impl ApprovalService {
             .log_action_simple(
                 created_by,
                 AuditAction::ApprovalGroupCreate,
-                Some("approval_groups"),
+                Some("approval_group"),
                 Some(group.id),
                 Some(&format!("Approval group: {}", request.name)),
                 None,
@@ -649,7 +649,6 @@ impl ApprovalService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::approval::*;
     use chrono::Utc;
     use sqlx::types::Json;
     use uuid::Uuid;

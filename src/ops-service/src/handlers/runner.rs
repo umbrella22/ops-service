@@ -400,7 +400,11 @@ pub async fn register_runner(
     };
 
     // 记录审计日志（Runner 注册/重新注册）
-    let action = if is_new { "register" } else { "re_register" };
+    let action = if is_new {
+        crate::services::audit_service::AuditAction::RunnerRegister.as_str()
+    } else {
+        crate::services::audit_service::AuditAction::RunnerReregister.as_str()
+    };
     let changes_summary = if is_new {
         format!("Runner registered: {}", request.name)
     } else {
@@ -553,8 +557,14 @@ pub async fn runner_heartbeat(
 /// 获取 Runner 状态（内部使用，也可用于监控）
 pub async fn get_runner_status(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "read", None, None)
+        .await?;
+
     let row = sqlx::query(
         "SELECT id, name, capabilities, docker_supported, max_concurrent_jobs,
                 current_jobs, status, last_heartbeat, created_at, updated_at
@@ -588,7 +598,15 @@ pub async fn get_runner_status(
 }
 
 /// 获取 Runner 列表
-pub async fn list_runners(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
+pub async fn list_runners(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "read", None, None)
+        .await?;
+
     let rows = sqlx::query(
         "SELECT id, name, capabilities, docker_supported, max_concurrent_jobs,
                 current_jobs, status, last_heartbeat, created_at, updated_at
@@ -635,6 +653,11 @@ pub async fn update_runner_status(
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateRunnerStatusRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "write", None, None)
+        .await?;
+
     // 验证状态值
     let status = match request.status.as_str() {
         "active" => "active",
@@ -678,7 +701,7 @@ pub async fn update_runner_status(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "update_status",
+            action: crate::services::audit_service::AuditAction::RunnerUpdate.as_str(),
             resource_type: "runner",
             resource_id: Some(id),
             resource_name: Some(&runner_name),
@@ -708,6 +731,11 @@ pub async fn delete_runner(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "write", None, None)
+        .await?;
+
     // 检查 Runner 是否存在并获取名称
     let runner = sqlx::query("SELECT id, name FROM runners WHERE id = $1")
         .bind(id)
@@ -738,7 +766,7 @@ pub async fn delete_runner(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "delete",
+            action: crate::services::audit_service::AuditAction::RunnerDelete.as_str(),
             resource_type: "runner",
             resource_id: Some(id),
             resource_name: Some(&runner_name),

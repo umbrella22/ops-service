@@ -993,7 +993,7 @@ mod tests {
         let manager = WorkspaceManager::new(temp_dir.to_string(), 3, Some(1000)).unwrap();
 
         assert_eq!(manager.base_dir, PathBuf::from(temp_dir));
-        assert_eq!(manager.retain_count, 3);
+        assert_eq!(manager.cleanup_policy(), CleanupPolicy::RetainRecent(3));
     }
 
     #[test]

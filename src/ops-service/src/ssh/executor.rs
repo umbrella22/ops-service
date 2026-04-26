@@ -11,14 +11,14 @@ use tracing::{debug, error, info, warn};
 // 使用 base64 crate 进行脚本编码
 use base64::{engine::general_purpose, Engine as _};
 
-use async_trait::async_trait;
 use russh::client;
 use russh::client::Config;
+use russh::keys::PrivateKeyWithHashAlg;
 use russh::ChannelMsg;
-use russh_keys::key::PublicKey;
-use russh_keys::load_secret_key;
-use russh_keys::PublicKeyBase64;
+use russh::keys::decode_secret_key;
+use russh::keys::PublicKeyBase64;
 use sha2::Digest;
+use russh::keys::ssh_key::PublicKey;
 
 use crate::error::AppError;
 
@@ -147,18 +147,21 @@ impl SSHClient {
                 passphrase,
             } => {
                 // 使用 load_secret_key 加载私钥
-                let key = load_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
+                let key = decode_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
                     error!(error = %e, "加载SSH私钥失败");
                     AppError::SshConnectionError(format!("加载私钥失败: {}", e))
                 })?;
 
                 handle
-                    .authenticate_publickey(self.config.username.clone(), Arc::new(key))
+                    .authenticate_publickey(
+                        self.config.username.clone(),
+                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                    )
                     .await
             }
         };
 
-        if !auth_result.unwrap_or(false) {
+        if !auth_result.map(|result| result.success()).unwrap_or(false) {
             error!("SSH认证失败");
             return Err(AppError::SshAuthenticationError("SSH认证失败".to_string()));
         }
@@ -308,18 +311,21 @@ impl SSHClient {
                 private_key,
                 passphrase,
             } => {
-                let key = load_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
+                let key = decode_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
                     error!(error = %e, "加载SSH私钥失败");
                     AppError::SshConnectionError(format!("加载私钥失败: {}", e))
                 })?;
 
                 handle
-                    .authenticate_publickey(self.config.username.clone(), Arc::new(key))
+                    .authenticate_publickey(
+                        self.config.username.clone(),
+                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                    )
                     .await
             }
         };
 
-        if !auth_result.unwrap_or(false) {
+        if !auth_result.map(|result| result.success()).unwrap_or(false) {
             error!("SSH认证失败");
             return Err(AppError::SshAuthenticationError("SSH认证失败".to_string()));
         }
@@ -496,18 +502,21 @@ impl SSHClient {
                 private_key,
                 passphrase,
             } => {
-                let key = load_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
+                let key = decode_secret_key(&private_key, passphrase.as_deref()).map_err(|e| {
                     error!(error = %e, "加载SSH私钥失败");
                     AppError::SshConnectionError(format!("加载私钥失败: {}", e))
                 })?;
 
                 handle
-                    .authenticate_publickey(self.config.username.clone(), Arc::new(key))
+                    .authenticate_publickey(
+                        self.config.username.clone(),
+                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                    )
                     .await
             }
         };
 
-        if !auth_result.unwrap_or(false) {
+        if !auth_result.map(|result| result.success()).unwrap_or(false) {
             error!("SSH认证失败");
             return Err(AppError::SshAuthenticationError("SSH认证失败".to_string()));
         }
@@ -613,40 +622,42 @@ struct SSHSession {
     port: u16,
 }
 
-#[async_trait]
 impl client::Handler for SSHSession {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
-        // 根据验证策略处理
-        match self.verification_mode {
-            HostKeyVerification::Disabled => {
-                warn!(
-                    host = %self.host,
-                    port = self.port,
-                    "Host key verification DISABLED - accepting all keys"
-                );
-                return Ok(true);
-            }
-            HostKeyVerification::Accept => {
-                // 生成主机密钥指纹
-                let key_data = server_public_key.public_key_base64();
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(key_data.as_bytes());
-                let hash = hasher.finalize();
-                let fingerprint = hex::encode(hash);
-                let host_key = format!("{}:{}", self.host, self.port);
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+        let verification_mode = self.verification_mode.clone();
+        let known_hosts = self.known_hosts.clone();
+        let host = self.host.clone();
+        let port = self.port;
+        let key_data = server_public_key.public_key_base64();
 
-                // 检查是否已记录此密钥
-                if let Some(known_hosts) = &self.known_hosts {
-                    if let Some(stored_fingerprint) = known_hosts.get(&host_key) {
-                        if stored_fingerprint == &fingerprint {
-                            debug!(host = %host_key, "Host key verified");
-                            return Ok(true);
-                        } else {
+        async move {
+            match verification_mode {
+                HostKeyVerification::Disabled => {
+                    warn!(
+                        host = %host,
+                        port = port,
+                        "Host key verification DISABLED - accepting all keys"
+                    );
+                    Ok(true)
+                }
+                HostKeyVerification::Accept => {
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(key_data.as_bytes());
+                    let fingerprint = hex::encode(hasher.finalize());
+                    let host_key = format!("{}:{}", host, port);
+
+                    if let Some(known_hosts) = &known_hosts {
+                        if let Some(stored_fingerprint) = known_hosts.get(&host_key) {
+                            if stored_fingerprint == &fingerprint {
+                                debug!(host = %host_key, "Host key verified");
+                                return Ok(true);
+                            }
+
                             error!(
                                 host = %host_key,
                                 expected = %stored_fingerprint,
@@ -656,31 +667,27 @@ impl client::Handler for SSHSession {
                             return Ok(false);
                         }
                     }
+
+                    info!(
+                        host = %host_key,
+                        fingerprint = %fingerprint,
+                        "First time connecting - accepting host key"
+                    );
+                    Ok(true)
                 }
+                HostKeyVerification::Strict => {
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(key_data.as_bytes());
+                    let fingerprint = hex::encode(hasher.finalize());
+                    let host_key = format!("{}:{}", host, port);
 
-                // 首次连接，记录密钥
-                info!(
-                    host = %host_key,
-                    fingerprint = %fingerprint,
-                    "First time connecting - accepting host key"
-                );
-                return Ok(true);
-            }
-            HostKeyVerification::Strict => {
-                // 严格模式：必须预先知道主机密钥
-                let key_data = server_public_key.public_key_base64();
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(key_data.as_bytes());
-                let hash = hasher.finalize();
-                let fingerprint = hex::encode(hash);
-                let host_key = format!("{}:{}", self.host, self.port);
+                    if let Some(known_hosts) = &known_hosts {
+                        if let Some(stored_fingerprint) = known_hosts.get(&host_key) {
+                            if stored_fingerprint == &fingerprint {
+                                debug!(host = %host_key, "Host key verified (strict mode)");
+                                return Ok(true);
+                            }
 
-                if let Some(known_hosts) = &self.known_hosts {
-                    if let Some(stored_fingerprint) = known_hosts.get(&host_key) {
-                        if stored_fingerprint == &fingerprint {
-                            debug!(host = %host_key, "Host key verified (strict mode)");
-                            return Ok(true);
-                        } else {
                             error!(
                                 host = %host_key,
                                 expected = %stored_fingerprint,
@@ -690,13 +697,13 @@ impl client::Handler for SSHSession {
                             return Ok(false);
                         }
                     }
-                }
 
-                error!(
-                    host = %host_key,
-                    "Unknown host in strict mode - rejecting connection"
-                );
-                Ok(false)
+                    error!(
+                        host = %host_key,
+                        "Unknown host in strict mode - rejecting connection"
+                    );
+                    Ok(false)
+                }
             }
         }
     }

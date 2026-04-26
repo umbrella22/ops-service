@@ -24,6 +24,11 @@ pub async fn create_approval_request(
     auth: AuthContext,
     Json(request): Json<CreateApprovalRequestRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
     let approval = state
         .approval_service
         .create_approval_request(request, auth.user_id)
@@ -48,8 +53,14 @@ pub async fn create_approval_request(
 /// 获取审批请求详情
 pub async fn get_approval_request(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
     let approval = state.approval_service.get_approval_request(id).await?;
     Ok(Json(approval))
 }
@@ -57,8 +68,14 @@ pub async fn get_approval_request(
 /// 查询审批请求列表
 pub async fn list_approval_requests(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Json(filters): Json<ApprovalListFilters>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
     let approvals = state
         .approval_service
         .list_approval_requests(filters)
@@ -73,6 +90,11 @@ pub async fn approve_request(
     Path(id): Path<Uuid>,
     Json(request): Json<ApproveRequestRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "approve", None, None)
+        .await?;
+
     let is_approve = request.decision == crate::models::approval::ApprovalStatus::Approved;
     state
         .approval_service
@@ -105,6 +127,11 @@ pub async fn cancel_approval_request(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
     state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
+    state
         .approval_service
         .cancel_approval_request(id, auth.user_id)
         .await?;
@@ -131,6 +158,11 @@ pub async fn create_approval_group(
     auth: AuthContext,
     Json(request): Json<CreateApprovalGroupRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "approve", None, None)
+        .await?;
+
     let group = state
         .approval_service
         .create_approval_group(request, auth.user_id)
@@ -155,7 +187,13 @@ pub async fn create_approval_group(
 /// 获取审批统计
 pub async fn get_approval_statistics(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
     let stats = state.approval_service.get_approval_statistics().await?;
     Ok(Json(stats))
 }

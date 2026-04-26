@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use futures::pin_mut;
 use lapin::{options::*, BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind};
+use lapin::types::ShortString;
 use secrecy::ExposeSecret;
 use serde::Serialize;
 use std::sync::Arc;
@@ -12,6 +13,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::config::RabbitMqConfig;
+
+fn short_string(value: impl Into<String>) -> ShortString {
+    value.into().into()
+}
 
 /// RabbitMQ 发布器
 #[derive(Clone)]
@@ -59,7 +64,7 @@ impl RabbitMqPublisher {
         // 声明构建任务交换机（Topic 类型）
         self.channel
             .exchange_declare(
-                &self.config.build_exchange,
+                short_string(self.config.build_exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions {
                     durable: true,
@@ -75,7 +80,7 @@ impl RabbitMqPublisher {
         // 声明 Runner 交换机（Direct 类型，用于注册/心跳）
         self.channel
             .exchange_declare(
-                &self.config.runner_exchange,
+                short_string(self.config.runner_exchange.clone()),
                 ExchangeKind::Direct,
                 ExchangeDeclareOptions {
                     durable: true,
@@ -92,7 +97,7 @@ impl RabbitMqPublisher {
         let dlq_exchange = format!("{}.dlq", self.config.build_exchange);
         self.channel
             .exchange_declare(
-                &dlq_exchange,
+                short_string(dlq_exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions {
                     durable: true,
@@ -125,8 +130,8 @@ impl RabbitMqPublisher {
         let confirm = self
             .channel
             .basic_publish(
-                &self.config.build_exchange,
-                &routing_key,
+                short_string(self.config.build_exchange.clone()),
+                short_string(routing_key.clone()),
                 BasicPublishOptions::default(),
                 payload,
                 BasicProperties::default()
@@ -155,8 +160,8 @@ impl RabbitMqPublisher {
 
         self.channel
             .basic_publish(
-                &self.config.runner_exchange,
-                routing_key,
+                short_string(self.config.runner_exchange.clone()),
+                short_string(routing_key),
                 BasicPublishOptions::default(),
                 &data,
                 BasicProperties::default()
@@ -174,7 +179,7 @@ impl RabbitMqPublisher {
         if let Err(e) = self
             .channel
             .exchange_declare(
-                &self.config.build_exchange,
+                short_string(self.config.build_exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions {
                     passive: true,
@@ -286,7 +291,7 @@ impl RabbitMqConsumer {
         // 声明构建状态交换机
         self.channel
             .exchange_declare(
-                &self.config.build_exchange,
+                short_string(self.config.build_exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions {
                     durable: true,
@@ -302,7 +307,7 @@ impl RabbitMqConsumer {
         let _queue = self
             .channel
             .queue_declare(
-                status_queue,
+                short_string(status_queue),
                 QueueDeclareOptions {
                     durable: true,
                     ..Default::default()
@@ -315,9 +320,9 @@ impl RabbitMqConsumer {
         // 绑定状态队列到交换机（监听所有状态更新）
         self.channel
             .queue_bind(
-                status_queue,
-                &self.config.build_exchange,
-                "build.status.#",
+                short_string(status_queue),
+                short_string(self.config.build_exchange.clone()),
+                short_string("build.status.#"),
                 QueueBindOptions::default(),
                 lapin::types::FieldTable::default(),
             )
@@ -331,7 +336,7 @@ impl RabbitMqConsumer {
         let _queue = self
             .channel
             .queue_declare(
-                log_queue,
+                short_string(log_queue),
                 QueueDeclareOptions {
                     durable: true,
                     ..Default::default()
@@ -344,9 +349,9 @@ impl RabbitMqConsumer {
         // 绑定日志队列到交换机
         self.channel
             .queue_bind(
-                log_queue,
-                &self.config.build_exchange,
-                "build.log.#",
+                short_string(log_queue),
+                short_string(self.config.build_exchange.clone()),
+                short_string("build.log.#"),
                 QueueBindOptions::default(),
                 lapin::types::FieldTable::default(),
             )
@@ -367,8 +372,8 @@ impl RabbitMqConsumer {
         let consumer = self
             .channel
             .basic_consume(
-                queue,
-                "status_consumer",
+                short_string(queue),
+                short_string("status_consumer"),
                 BasicConsumeOptions::default(),
                 lapin::types::FieldTable::default(),
             )
@@ -416,8 +421,8 @@ impl RabbitMqConsumer {
         let consumer = self
             .channel
             .basic_consume(
-                queue,
-                "log_consumer",
+                short_string(queue),
+                short_string("log_consumer"),
                 BasicConsumeOptions::default(),
                 lapin::types::FieldTable::default(),
             )
@@ -460,11 +465,11 @@ impl RabbitMqConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secrecy::Secret;
+    use secrecy::SecretString;
 
     fn create_test_config() -> RabbitMqConfig {
         RabbitMqConfig {
-            amqp_url: Secret::new("amqp://guest:guest@localhost:5672/%2F".to_string()),
+            amqp_url: SecretString::from("amqp://guest:guest@localhost:5672/%2F".to_string()),
             vhost: "/".to_string(),
             build_exchange: "test.ops.build".to_string(),
             runner_exchange: "test.ops.runner".to_string(),

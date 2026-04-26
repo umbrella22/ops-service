@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use lapin::{options::*, Channel, Connection, ConnectionProperties, ExchangeKind, Queue};
+use lapin::types::ShortString;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
@@ -14,6 +15,10 @@ use crate::publisher::MessagePublisher;
 
 // 导入 lapin 的类型
 use lapin::types::FieldTable;
+
+fn short_string(value: impl Into<String>) -> ShortString {
+    value.into().into()
+}
 
 /// 任务 Worker
 pub struct TaskWorker {
@@ -45,7 +50,7 @@ impl TaskWorker {
         // 声明交换机
         channel
             .exchange_declare(
-                config.message_queue.exchange.as_str(),
+                short_string(config.message_queue.exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions::default(),
                 FieldTable::default(),
@@ -58,7 +63,7 @@ impl TaskWorker {
         // 声明队列
         let queue_name = config.queue_name();
         let queue = channel
-            .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
+            .queue_declare(short_string(queue_name.clone()), QueueDeclareOptions::default(), FieldTable::default())
             .await
             .context("Failed to declare queue")?;
 
@@ -77,9 +82,9 @@ impl TaskWorker {
             let broadcast_routing_key = config.routing_key(capability);
             channel
                 .queue_bind(
-                    &queue_name,
-                    &config.message_queue.exchange,
-                    &broadcast_routing_key,
+                    short_string(queue_name.clone()),
+                    short_string(config.message_queue.exchange.clone()),
+                    short_string(broadcast_routing_key.clone()),
                     QueueBindOptions::default(),
                     FieldTable::default(),
                 )
@@ -94,9 +99,9 @@ impl TaskWorker {
             let direct_routing_key = config.routing_key_for_runner(capability);
             channel
                 .queue_bind(
-                    &queue_name,
-                    &config.message_queue.exchange,
-                    &direct_routing_key,
+                    short_string(queue_name.clone()),
+                    short_string(config.message_queue.exchange.clone()),
+                    short_string(direct_routing_key.clone()),
                     QueueBindOptions::default(),
                     FieldTable::default(),
                 )
@@ -135,8 +140,8 @@ impl TaskWorker {
         let consumer = self
             .channel
             .basic_consume(
-                self.queue.name().as_str(),
-                "",
+                self.queue.name().clone(),
+                short_string(""),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             )

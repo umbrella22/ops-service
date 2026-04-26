@@ -184,7 +184,7 @@ impl JwtService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secrecy::Secret;
+    use secrecy::SecretString;
 
     // Mock config for testing
     fn test_config() -> AppConfig {
@@ -194,7 +194,7 @@ mod tests {
                 graceful_shutdown_timeout_secs: 30,
             },
             database: crate::config::DatabaseConfig {
-                url: secrecy::Secret::new("postgresql://localhost/test".to_string()),
+                url: secrecy::SecretString::from("postgresql://localhost/test".to_string()),
                 max_connections: 10,
                 min_connections: 1,
                 acquire_timeout_secs: 30,
@@ -206,7 +206,7 @@ mod tests {
                 format: "json".to_string(),
             },
             security: crate::config::SecurityConfig {
-                jwt_secret: Secret::new("test_secret_key_32_characters_long!".to_string()),
+                jwt_secret: SecretString::from("test_secret_key_32_characters_long!".to_string()),
                 access_token_exp_secs: 900,
                 refresh_token_exp_secs: 604800,
                 rate_limit_rps: 100,
@@ -222,7 +222,7 @@ mod tests {
             },
             ssh: crate::config::SshConfig {
                 default_username: "root".to_string(),
-                default_password: Secret::new("".to_string()),
+                default_password: SecretString::from("".to_string()),
                 default_private_key: None,
                 private_key_passphrase: None,
                 connect_timeout_secs: 10,
@@ -241,7 +241,7 @@ mod tests {
                 queue_max_length: 1000,
             },
             rabbitmq: crate::config::RabbitMqConfig {
-                amqp_url: Secret::new("amqp://localhost:5672".to_string()),
+                amqp_url: SecretString::from("amqp://localhost:5672".to_string()),
                 vhost: "/".to_string(),
                 build_exchange: "ops.build".to_string(),
                 runner_exchange: "ops.runner".to_string(),

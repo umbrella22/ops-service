@@ -2,7 +2,7 @@
 //! 从环境变量加载所有配置，使用 Secret 包装敏感信息
 
 use config::{Config, ConfigError, Environment};
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -16,7 +16,7 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
     /// 数据库连接 URL（使用 Secret 包装，防止日志泄露）
-    pub url: Secret<String>,
+    pub url: SecretString,
     /// 最大连接数
     pub max_connections: u32,
     /// 最小连接数
@@ -40,7 +40,7 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SecurityConfig {
     /// JWT 密钥（使用 Secret 包装，防止日志泄露）
-    pub jwt_secret: Secret<String>,
+    pub jwt_secret: SecretString,
     /// 访问令牌过期时间（秒）
     pub access_token_exp_secs: u64,
     /// 刷新令牌过期时间（秒）
@@ -65,7 +65,7 @@ pub struct SecurityConfig {
     pub allowed_ips: Option<Vec<String>>,
     /// Runner API Key（使用 Secret 包装，用于 Runner 注册和心跳鉴权）
     #[serde(default)]
-    pub runner_api_key: Option<Secret<String>>,
+    pub runner_api_key: Option<SecretString>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,11 +73,11 @@ pub struct SshConfig {
     /// 默认 SSH 用户名
     pub default_username: String,
     /// 默认 SSH 密码（使用 Secret 包装，防止日志泄露）
-    pub default_password: Secret<String>,
+    pub default_password: SecretString,
     /// 默认 SSH 私钥（可选，使用 Secret 包装）
-    pub default_private_key: Option<Secret<String>>,
+    pub default_private_key: Option<SecretString>,
     /// 私钥密码（可选，使用 Secret 包装）
-    pub private_key_passphrase: Option<Secret<String>>,
+    pub private_key_passphrase: Option<SecretString>,
     /// 连接超时（秒）
     pub connect_timeout_secs: u64,
     /// 握手超时（秒）
@@ -134,7 +134,7 @@ pub struct ConcurrencyConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RabbitMqConfig {
     /// AMQP 连接 URL
-    pub amqp_url: Secret<String>,
+    pub amqp_url: SecretString,
     /// Virtual host
     #[serde(default = "default_rabbitmq_vhost")]
     pub vhost: String,

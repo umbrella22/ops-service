@@ -416,7 +416,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         ));
 
     // 指标端点
-    let metrics_routes = Router::new().route("/metrics", get(handlers::metrics::metrics_export));
+    let metrics_routes = Router::new()
+        .route("/metrics", get(handlers::metrics::metrics_export))
+        .route("/metrics.json", get(handlers::metrics::metrics_json));
 
     // 组合所有路由
     Router::new()

@@ -156,7 +156,7 @@ impl JobService {
             .log_action_simple(
                 created_by,
                 AuditAction::JobCreate,
-                Some("jobs"),
+                Some("job"),
                 Some(job_id),
                 Some("Command failed"),
                 None,
@@ -297,7 +297,7 @@ impl JobService {
             .log_action_simple(
                 created_by,
                 AuditAction::JobCreate,
-                Some("jobs"),
+                Some("job"),
                 Some(job_id),
                 Some("Script job created"),
                 None,
@@ -641,7 +641,7 @@ impl JobService {
             .log_action_simple(
                 requested_by,
                 AuditAction::JobCancel,
-                Some("jobs"),
+                Some("job"),
                 Some(job_id),
                 Some("Command failed"),
                 None,
@@ -756,7 +756,7 @@ impl JobService {
             .log_action_simple(
                 requested_by,
                 AuditAction::JobRetry,
-                Some("jobs"),
+                Some("job"),
                 Some(job_id),
                 Some("Command failed"),
                 None,
@@ -1162,16 +1162,16 @@ impl JobService {
         } else if let Some(global_private_key) = &ssh_config.default_private_key {
             // 使用全局私钥
             SshAuth::Key {
-                private_key: global_private_key.expose_secret().clone(),
+                private_key: global_private_key.expose_secret().to_string(),
                 passphrase: ssh_config
                     .private_key_passphrase
                     .as_ref()
-                    .map(|p| p.expose_secret().clone()),
+                    .map(|p| p.expose_secret().to_string()),
             }
         } else {
             // 使用全局密码
             SshAuth::Password {
-                password: ssh_config.default_password.expose_secret().clone(),
+                password: ssh_config.default_password.expose_secret().to_string(),
             }
         };
 

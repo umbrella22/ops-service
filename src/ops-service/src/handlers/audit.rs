@@ -72,6 +72,18 @@ pub async fn list_audit_logs(
         .await?;
     let count = state.audit_service.count_logs(&filters).await?;
 
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            crate::services::audit_service::AuditAction::AuditQuery,
+            Some("audit"),
+            None,
+            Some("Queried audit logs"),
+            None,
+        )
+        .await;
+
     Ok(Json(json!({
         "logs": logs,
         "count": logs.len(),
@@ -101,6 +113,18 @@ pub async fn list_login_events(
             query.limit,
         )
         .await?;
+
+    let _ = state
+        .audit_service
+        .log_action_simple(
+            auth_context.user_id,
+            crate::services::audit_service::AuditAction::AuditQuery,
+            Some("audit"),
+            None,
+            Some("Queried login events"),
+            None,
+        )
+        .await;
 
     Ok(Json(json!({
         "events": events,

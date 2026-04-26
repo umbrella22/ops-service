@@ -285,10 +285,22 @@ INSERT INTO permissions (resource, action, description) VALUES
     ('job', 'read', 'View jobs and tasks'),
     ('job', 'execute', 'Execute jobs on targets'),
     ('job', 'approve', 'Approve jobs (for production)'),
+    ('approval', 'read', 'View approval requests and groups'),
+    ('approval', 'approve', 'Approve or reject approval requests'),
+    ('build', 'read', 'View build jobs and build status'),
+    ('build', 'execute', 'Create, cancel, retry build jobs'),
+    ('build', 'output_detail', 'View detailed build step output'),
+    ('runner', 'read', 'View runner status and runner list'),
+    ('runner', 'write', 'Manage runner status and runner records'),
+    ('artifact', 'read', 'View artifacts and download metadata'),
+    ('artifact', 'write', 'Manage artifact metadata and retention'),
     ('audit', 'read', 'View audit logs'),
     ('audit', 'admin', 'Access system-level audit'),
     ('user', 'read', 'View user information'),
     ('user', 'write', 'Manage users and roles'),
+    ('role', 'read', 'View roles and permissions'),
+    ('role', 'write', 'Manage roles and permissions'),
+    ('role_binding', 'write', 'Manage user role bindings'),
     ('system', 'admin', 'System administration')
 ON CONFLICT (resource, action) DO NOTHING;
 
@@ -308,13 +320,29 @@ ON CONFLICT DO NOTHING;
 -- Operator role
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'operator' AND p.action IN ('read', 'execute')
+WHERE r.name = 'operator'
+  AND (
+    (p.resource = 'asset' AND p.action = 'read') OR
+    (p.resource = 'job' AND p.action IN ('read', 'execute')) OR
+    (p.resource = 'approval' AND p.action = 'read') OR
+    (p.resource = 'build' AND p.action IN ('read', 'execute')) OR
+    (p.resource = 'runner' AND p.action = 'read') OR
+    (p.resource = 'artifact' AND p.action = 'read')
+  )
 ON CONFLICT DO NOTHING;
 
 -- Viewer role
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'viewer' AND p.action = 'read'
+WHERE r.name = 'viewer'
+  AND (
+    (p.resource = 'asset' AND p.action = 'read') OR
+    (p.resource = 'job' AND p.action = 'read') OR
+    (p.resource = 'approval' AND p.action = 'read') OR
+    (p.resource = 'build' AND p.action = 'read') OR
+    (p.resource = 'runner' AND p.action = 'read') OR
+    (p.resource = 'artifact' AND p.action = 'read')
+  )
 ON CONFLICT DO NOTHING;
 
 -- Auditor role

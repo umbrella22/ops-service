@@ -11,13 +11,13 @@
 
 use anyhow::{anyhow, Context, Result};
 use bollard::{
-    container::{LogOutput, StartContainerOptions},
+    container::LogOutput,
     models::{
         ContainerCreateBody as ContainerConfig, HostConfig, Mount, MountTypeEnum, ResourcesUlimits,
     },
     query_parameters::{
-        CreateContainerOptions, CreateImageOptions, LogsOptions, RemoveContainerOptions,
-        StopContainerOptions, WaitContainerOptions,
+        CreateContainerOptions, CreateImageOptions, ListContainersOptions, LogsOptions,
+        RemoveContainerOptions, StartContainerOptions, StopContainerOptions, WaitContainerOptions,
     },
     Docker,
 };
@@ -259,7 +259,7 @@ impl DockerExecutor {
 
         // 启动容器
         self.docker
-            .start_container(&container_name, None::<StartContainerOptions<String>>)
+            .start_container(&container_name, None::<StartContainerOptions>)
             .await
             .context("Failed to start container")?;
 
@@ -483,7 +483,7 @@ impl DockerExecutor {
     pub async fn cleanup_containers(&self) -> Result<()> {
         let containers = self
             .docker
-            .list_containers(None::<bollard::container::ListContainersOptions<String>>)
+            .list_containers(None::<ListContainersOptions>)
             .await
             .context("Failed to list containers")?;
 

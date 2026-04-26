@@ -14,7 +14,7 @@ use ops_service::repository::asset_repo::AssetRepository;
 use ops_service::repository::audit_repo::AuditRepository;
 use ops_service::repository::role_repo::RoleRepository;
 use ops_service::repository::user_repo::UserRepository;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ fn create_test_config() -> AppConfig {
             graceful_shutdown_timeout_secs: 5,
         },
         database: DatabaseConfig {
-            url: Secret::new(database_url),
+            url: SecretString::from(database_url),
             max_connections: 5,
             min_connections: 1,
             acquire_timeout_secs: 5,
@@ -42,7 +42,7 @@ fn create_test_config() -> AppConfig {
             format: "pretty".to_string(),
         },
         security: SecurityConfig {
-            jwt_secret: Secret::new("test-secret-key-for-testing-only-min-32-chars".to_string()),
+            jwt_secret: SecretString::from("test-secret-key-for-testing-only-min-32-chars".to_string()),
             access_token_exp_secs: 300,
             refresh_token_exp_secs: 3600,
             password_min_length: 8,
@@ -58,7 +58,7 @@ fn create_test_config() -> AppConfig {
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
-            default_password: Secret::new("".to_string()),
+            default_password: SecretString::from("".to_string()),
             default_private_key: None,
             private_key_passphrase: None,
             connect_timeout_secs: 10,
@@ -77,7 +77,7 @@ fn create_test_config() -> AppConfig {
             queue_max_length: 1000,
         },
         rabbitmq: RabbitMqConfig {
-            amqp_url: Secret::new("amqp://localhost:5672".to_string()),
+            amqp_url: SecretString::from("amqp://localhost:5672".to_string()),
             vhost: "/".to_string(),
             build_exchange: "ops.build".to_string(),
             runner_exchange: "ops.runner".to_string(),

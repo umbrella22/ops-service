@@ -7,7 +7,7 @@ use ops_service::config::{
     AppConfig, ConcurrencyConfig, DatabaseConfig, LoggingConfig, RabbitMqConfig,
     RunnerDockerConfig, SecurityConfig, ServerConfig, SshConfig,
 };
-use secrecy::Secret;
+use secrecy::SecretString;
 use uuid::Uuid;
 
 /// 创建测试配置
@@ -18,7 +18,7 @@ fn create_test_config() -> AppConfig {
             graceful_shutdown_timeout_secs: 30,
         },
         database: DatabaseConfig {
-            url: Secret::new("postgresql://localhost/test".to_string()),
+            url: SecretString::from("postgresql://localhost/test".to_string()),
             max_connections: 10,
             min_connections: 1,
             acquire_timeout_secs: 30,
@@ -30,7 +30,7 @@ fn create_test_config() -> AppConfig {
             format: "json".to_string(),
         },
         security: SecurityConfig {
-            jwt_secret: Secret::new("test_secret_key_32_characters_long!".to_string()),
+            jwt_secret: SecretString::from("test_secret_key_32_characters_long!".to_string()),
             access_token_exp_secs: 900,
             refresh_token_exp_secs: 604800,
             rate_limit_rps: 100,
@@ -46,7 +46,7 @@ fn create_test_config() -> AppConfig {
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
-            default_password: Secret::new("".to_string()),
+            default_password: SecretString::from("".to_string()),
             default_private_key: None,
             private_key_passphrase: None,
             connect_timeout_secs: 10,
@@ -65,7 +65,7 @@ fn create_test_config() -> AppConfig {
             queue_max_length: 1000,
         },
         rabbitmq: RabbitMqConfig {
-            amqp_url: Secret::new("amqp://localhost:5672".to_string()),
+            amqp_url: SecretString::from("amqp://localhost:5672".to_string()),
             vhost: "/".to_string(),
             build_exchange: "ops.build".to_string(),
             runner_exchange: "ops.runner".to_string(),
@@ -97,7 +97,7 @@ fn test_jwt_service_creation() {
 #[test]
 fn test_jwt_service_secret_too_short() {
     let mut config = create_test_config();
-    config.security.jwt_secret = Secret::new("short".to_string());
+    config.security.jwt_secret = SecretString::from("short".to_string());
 
     let result = JwtService::from_config(&config);
     assert!(result.is_err(), "Short secret should fail");

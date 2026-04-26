@@ -33,6 +33,11 @@ pub enum AuditAction {
     // 构建相关
     BuildCreate,
     BuildExecute,
+    BuildCancel,
+    BuildRetry,
+    ArtifactCreate,
+    ArtifactUpdate,
+    ArtifactDelete,
     ArtifactDownload,
 
     // 权限相关
@@ -55,6 +60,15 @@ pub enum AuditAction {
     RunnerConfigCreate,
     RunnerConfigUpdate,
     RunnerConfigDelete,
+
+    // Runner 相关
+    RunnerRegister,
+    RunnerReregister,
+    RunnerUpdate,
+    RunnerDelete,
+
+    // 审计查询
+    AuditQuery,
 }
 
 impl AuditAction {
@@ -82,6 +96,11 @@ impl AuditAction {
 
             AuditAction::BuildCreate => "build.create",
             AuditAction::BuildExecute => "build.execute",
+            AuditAction::BuildCancel => "build.cancel",
+            AuditAction::BuildRetry => "build.retry",
+            AuditAction::ArtifactCreate => "artifact.create",
+            AuditAction::ArtifactUpdate => "artifact.update",
+            AuditAction::ArtifactDelete => "artifact.delete",
             AuditAction::ArtifactDownload => "artifact.download",
 
             AuditAction::RoleCreate => "role.create",
@@ -101,6 +120,13 @@ impl AuditAction {
             AuditAction::RunnerConfigCreate => "runner_config.create",
             AuditAction::RunnerConfigUpdate => "runner_config.update",
             AuditAction::RunnerConfigDelete => "runner_config.delete",
+
+            AuditAction::RunnerRegister => "runner.register",
+            AuditAction::RunnerReregister => "runner.re_register",
+            AuditAction::RunnerUpdate => "runner.update",
+            AuditAction::RunnerDelete => "runner.delete",
+
+            AuditAction::AuditQuery => "audit.query",
         }
     }
 }

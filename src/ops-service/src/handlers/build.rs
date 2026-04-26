@@ -277,6 +277,11 @@ pub async fn create_build_job(
     auth: AuthContext,
     Json(request): Json<CreateBuildJobRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "execute", None, None)
+        .await?;
+
     // 验证请求
     if request.steps.is_empty() {
         return Err(AppError::validation("Build job must have at least one step"));
@@ -323,8 +328,8 @@ pub async fn create_build_job(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "create",
-            resource_type: "build_job",
+            action: crate::services::audit_service::AuditAction::BuildCreate.as_str(),
+            resource_type: "build",
             resource_id: Some(job_id),
             resource_name: Some(&request.project_name),
             changes: Some(serde_json::json!({
@@ -450,7 +455,11 @@ pub async fn list_build_jobs(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<impl IntoResponse> {
-    // 检查权限
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "read", None, None)
+        .await?;
+
     let is_admin = state
         .permission_service
         .is_admin(auth.user_id)
@@ -534,6 +543,11 @@ pub async fn get_build_job(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "read", None, None)
+        .await?;
+
     // 查询构建作业
     #[derive(sqlx::FromRow)]
     struct BuildJobRow {
@@ -652,6 +666,11 @@ pub async fn get_build_steps(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "output_detail", None, None)
+        .await?;
+
     // 首先检查作业是否存在以及权限
     let job = sqlx::query("SELECT created_by FROM build_jobs WHERE id = $1")
         .bind(id)
@@ -712,6 +731,11 @@ pub async fn cancel_build_job(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "execute", None, None)
+        .await?;
+
     // 查询作业
     let job = sqlx::query("SELECT created_by, status FROM build_jobs WHERE id = $1")
         .bind(id)
@@ -761,8 +785,8 @@ pub async fn cancel_build_job(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "cancel",
-            resource_type: "build_job",
+            action: crate::services::audit_service::AuditAction::BuildCancel.as_str(),
+            resource_type: "build",
             resource_id: Some(id),
             resource_name: None,
             changes: None,
@@ -792,6 +816,11 @@ pub async fn retry_build_job(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "build", "execute", None, None)
+        .await?;
+
     // 查询原作业
     #[derive(sqlx::FromRow)]
     struct OriginalJob {
@@ -868,8 +897,8 @@ pub async fn retry_build_job(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "retry",
-            resource_type: "build_job",
+            action: crate::services::audit_service::AuditAction::BuildRetry.as_str(),
+            resource_type: "build",
             resource_id: Some(new_job_id),
             resource_name: None,
             changes: Some(serde_json::json!({"original_job_id": id})),

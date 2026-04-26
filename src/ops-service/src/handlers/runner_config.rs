@@ -74,7 +74,15 @@ pub struct SetActiveConfigRequest {
 // ==================== Handler Functions ====================
 
 /// 获取所有 Runner Docker 配置
-pub async fn list_runner_configs(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
+pub async fn list_runner_configs(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "read", None, None)
+        .await?;
+
     let rows = sqlx::query_as::<_, RunnerDockerConfig>(
         "SELECT id, name, enabled, default_image, default_timeout_secs,
                 memory_limit_gb, cpu_shares, pids_limit, images_by_type,
@@ -100,8 +108,14 @@ pub async fn list_runner_configs(State(state): State<Arc<AppState>>) -> Result<i
 /// 获取单个 Runner Docker 配置
 pub async fn get_runner_config(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "read", None, None)
+        .await?;
+
     let config = sqlx::query_as::<_, RunnerDockerConfig>(
         "SELECT id, name, enabled, default_image, default_timeout_secs,
                 memory_limit_gb, cpu_shares, pids_limit, images_by_type,
@@ -127,6 +141,11 @@ pub async fn create_runner_config(
     auth: AuthContext,
     Json(request): Json<RunnerDockerConfigRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "write", None, None)
+        .await?;
+
     // 验证请求
     request.validate().map_err(|e| AppError::validation(&e))?;
 
@@ -223,6 +242,11 @@ pub async fn update_runner_config(
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateRunnerDockerConfigRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "write", None, None)
+        .await?;
+
     // 获取当前配置
     let current = sqlx::query_as::<_, RunnerDockerConfig>(
         "SELECT id, name, enabled, default_image, default_timeout_secs,
@@ -418,6 +442,11 @@ pub async fn delete_runner_config(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "write", None, None)
+        .await?;
+
     // 检查配置是否存在
     let config = sqlx::query("SELECT name FROM runner_docker_configs WHERE id = $1")
         .bind(id)
@@ -466,8 +495,14 @@ pub async fn delete_runner_config(
 /// 获取配置变更历史
 pub async fn get_config_history(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "runner", "read", None, None)
+        .await?;
+
     // 检查配置是否存在
     let _exists = sqlx::query("SELECT id FROM runner_docker_configs WHERE id = $1")
         .bind(id)

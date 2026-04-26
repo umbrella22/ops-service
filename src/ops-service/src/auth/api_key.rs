@@ -1,7 +1,6 @@
 //! API key generation and validation for service accounts
 
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
+use rand::distr::{Alphanumeric, SampleString};
 use sha2::{Digest, Sha256};
 
 /// API key generator
@@ -11,11 +10,7 @@ impl ApiKeyGenerator {
     /// Generate a new API key
     /// Format: ops_ak_<32-char-random>
     pub fn generate() -> String {
-        let random: String = thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect();
+        let random = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
         format!("ops_ak_{}", random)
     }
@@ -32,7 +27,7 @@ impl ApiKeyGenerator {
     pub fn hash(key: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(key.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hex::encode(hasher.finalize())
     }
 }
 

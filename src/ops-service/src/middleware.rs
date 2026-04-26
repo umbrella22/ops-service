@@ -572,7 +572,7 @@ pub async fn runner_auth_middleware(
     };
 
     // 验证 API Key
-    if provided_key != expected_key.as_str() {
+    if provided_key != expected_key {
         tracing::warn!(
             runner_name = headers.get("x-runner-name").and_then(|v| v.to_str().ok()),
             "Invalid Runner API key"

@@ -2,11 +2,16 @@
 
 use anyhow::{Context, Result};
 use lapin::types::FieldTable;
+use lapin::types::ShortString;
 use lapin::{options::*, BasicProperties, Channel, ExchangeKind};
 use tracing::{debug, error, info, warn};
 
 use crate::config::RunnerConfig;
 use crate::messages::*;
+
+fn short_string(value: impl Into<String>) -> ShortString {
+    value.into().into()
+}
 
 /// 消息发布器
 pub struct MessagePublisher {
@@ -25,7 +30,7 @@ impl MessagePublisher {
         // 与控制面保持一致：使用同一个 exchange，通过 routing key 区分消息类型
         channel
             .exchange_declare(
-                &exchange,
+                short_string(exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions::default(),
                 FieldTable::default(),
@@ -71,8 +76,8 @@ impl MessagePublisher {
 
         self.channel
             .basic_publish(
-                &self.exchange,
-                &routing_key,
+                short_string(self.exchange.clone()),
+                short_string(routing_key.clone()),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default()
@@ -199,8 +204,8 @@ impl MessagePublisher {
 
         self.channel
             .basic_publish(
-                &self.exchange,
-                &routing_key,
+                short_string(self.exchange.clone()),
+                short_string(routing_key.clone()),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default()
@@ -285,8 +290,8 @@ impl MessagePublisher {
 
         self.channel
             .basic_publish(
-                &self.exchange,
-                &routing_key,
+                short_string(self.exchange.clone()),
+                short_string(routing_key.clone()),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default()

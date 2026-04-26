@@ -149,6 +149,11 @@ pub async fn record_artifact(
     auth: AuthContext,
     Json(request): Json<RecordArtifactRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "write", None, None)
+        .await?;
+
     // 检查构建作业是否存在
     let _job_exists = sqlx::query("SELECT id, created_by FROM build_jobs WHERE id = $1")
         .bind(request.build_job_id)
@@ -227,7 +232,7 @@ pub async fn record_artifact(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "record",
+            action: crate::services::audit_service::AuditAction::ArtifactCreate.as_str(),
             resource_type: "artifact",
             resource_id: Some(artifact_id),
             resource_name: Some(&request.artifact_name),
@@ -267,6 +272,11 @@ pub async fn list_artifacts(
     auth: AuthContext,
     Query(query): Query<ArtifactListQuery>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "read", None, None)
+        .await?;
+
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(50).min(100);
     let offset = (page - 1) * per_page;
@@ -403,6 +413,11 @@ pub async fn get_artifact(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "read", None, None)
+        .await?;
+
     let row = sqlx::query(
         "SELECT id, build_job_id, artifact_name, artifact_type, artifact_path,
                 artifact_size, artifact_hash, version, metadata, is_public, download_count,
@@ -455,6 +470,11 @@ pub async fn record_download(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "read", None, None)
+        .await?;
+
     // 提取 IP 地址（优先使用 X-Forwarded-For 或 X-Real-IP）
     let ip_address = headers
         .get("x-forwarded-for")
@@ -538,7 +558,7 @@ pub async fn record_download(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "download",
+            action: crate::services::audit_service::AuditAction::ArtifactDownload.as_str(),
             resource_type: "artifact",
             resource_id: Some(id),
             resource_name: None,
@@ -568,6 +588,11 @@ pub async fn update_artifact(
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateArtifactRequest>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "write", None, None)
+        .await?;
+
     // 检查产物是否存在
     let artifact = sqlx::query("SELECT id, uploaded_by FROM build_artifacts WHERE id = $1")
         .bind(id)
@@ -623,7 +648,7 @@ pub async fn update_artifact(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "update",
+            action: crate::services::audit_service::AuditAction::ArtifactUpdate.as_str(),
             resource_type: "artifact",
             resource_id: Some(id),
             resource_name: None,
@@ -648,6 +673,11 @@ pub async fn delete_artifact(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "write", None, None)
+        .await?;
+
     // 检查产物是否存在
     let artifact = sqlx::query("SELECT id, uploaded_by FROM build_artifacts WHERE id = $1")
         .bind(id)
@@ -688,7 +718,7 @@ pub async fn delete_artifact(
             subject_id: auth.user_id,
             subject_type: "user",
             subject_name: None,
-            action: "delete",
+            action: crate::services::audit_service::AuditAction::ArtifactDelete.as_str(),
             resource_type: "artifact",
             resource_id: Some(id),
             resource_name: None,
@@ -739,6 +769,11 @@ pub async fn get_download_history(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "read", None, None)
+        .await?;
+
     // 检查产物是否存在及权限
     let artifact =
         sqlx::query("SELECT id, is_public, uploaded_by FROM build_artifacts WHERE id = $1")
@@ -832,6 +867,11 @@ pub async fn generate_download_url(
     auth: AuthContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse> {
+    state
+        .permission_service
+        .require_permission(auth.user_id, "artifact", "read", None, None)
+        .await?;
+
     // 检查产物是否存在
     let artifact = sqlx::query(
         "SELECT id, artifact_name, artifact_path, artifact_size, artifact_hash, is_public, uploaded_by
