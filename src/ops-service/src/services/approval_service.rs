@@ -476,13 +476,16 @@ impl ApprovalService {
         let is_high_risk = self.is_high_risk_command(command);
 
         // 检查是否为关键分组
-        let is_critical_group = target_hosts.iter().any(|h| {
-            // 检查主机的分组是否被标记为关键
-            self.is_critical_group(h.group_id)
-        });
+        let mut is_critical = false;
+        for h in target_hosts {
+            if self.is_critical_group(h.group_id).await {
+                is_critical = true;
+                break;
+            }
+        }
 
         let requires_approval =
-            is_production || exceeds_threshold || is_high_risk || is_critical_group;
+            is_production || exceeds_threshold || is_high_risk || is_critical;
 
         if requires_approval {
             info!(
@@ -490,7 +493,7 @@ impl ApprovalService {
                 is_production,
                 exceeds_threshold,
                 is_high_risk,
-                is_critical_group,
+                is_critical,
                 "Job requires approval"
             );
         }
@@ -525,24 +528,17 @@ impl ApprovalService {
     /// 检查条件：
     /// 1. 分组标记为 is_critical = true
     /// 2. 分组名称包含 "critical" 或 "prod"
-    fn is_critical_group(&self, _group_id: uuid::Uuid) -> bool {
-        // TODO: 实现数据库查询来检查分组是否为关键分组
-        // 当前使用简化逻辑：检查分组名称
-
-        // 在实际实现中，应该查询数据库：
-        // sqlx::query_scalar::<_, bool>(
-        //     "SELECT EXISTS(
-        //         SELECT 1 FROM asset_groups
-        //         WHERE id = $1 AND (is_critical = true OR name ILIKE '%critical%' OR name ILIKE '%prod%')
-        //     )"
-        // )
-        // .bind(group_id)
-        // .fetch_one(&self.db)
-        // .await
-        // .unwrap_or(false)
-
-        // 临时返回 false，等待数据库迁移添加 is_critical 字段
-        false
+    async fn is_critical_group(&self, group_id: uuid::Uuid) -> bool {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM assets_groups
+                WHERE id = $1 AND (is_critical = true OR name ILIKE '%prod%' OR name ILIKE '%critical%')
+            )"
+        )
+        .bind(group_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or(false)
     }
 
     /// 获取审批统计

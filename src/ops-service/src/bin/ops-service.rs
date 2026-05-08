@@ -99,6 +99,13 @@ async fn main() -> anyhow::Result<()> {
         StorageService::new(ops_service::services::StorageConfig::default())
     }));
 
+    // 初始化 Webhook Nonce 防重放存储
+    let webhook_nonce_store = std::sync::Arc::new(
+        ops_service::middleware::webhook_hmac::NonceStore::new(
+            config.security.runner_webhook_nonce_ttl_secs,
+        ),
+    );
+
     let app_state = Arc::new(AppState {
         db: db_pool.clone(),
         config: config.clone(),
@@ -119,7 +126,8 @@ async fn main() -> anyhow::Result<()> {
                 audit_service.clone(),
                 config.ssh.clone(),
             )
-            .with_event_bus(event_bus.clone()),
+            .with_event_bus(event_bus.clone())
+            .with_approval_service(approval_service.clone()),
         ),
         approval_service,
         event_bus,
@@ -129,12 +137,17 @@ async fn main() -> anyhow::Result<()> {
         runner_docker_config_cache,
         runner_scheduler,
         storage_service,
+        webhook_nonce_store: Some(webhook_nonce_store),
+        runner_config_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     });
 
     let app = routes::create_router(app_state.clone());
 
     // 启动 RabbitMQ 消费者（P2.1：Runner 回传链路闭环）
     let consumer_handle = start_rabbitmq_consumer(app_state.clone()).await;
+
+    // 启动审批超时自动过期任务 (P3)
+    let expiry_handle = start_approval_expiry_task(app_state.clone());
 
     let addr = &config.server.addr;
     let listener = TcpListener::bind(addr).await?;
@@ -145,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal(
             config.server.graceful_shutdown_timeout_secs,
             consumer_handle,
+            expiry_handle,
         ))
         .await?;
 
@@ -152,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 启动 RabbitMQ 消费者后台任务
+/// 启动 RabbitMQ 消费者后台任务（含自动重连）
 async fn start_rabbitmq_consumer(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     let consumer_state = state.clone();
     tokio::spawn(async move {
@@ -178,40 +192,51 @@ async fn start_rabbitmq_consumer(state: Arc<AppState>) -> tokio::task::JoinHandl
 
         let msg_consumer = BuildMessageConsumer::new(consumer_state);
 
-        // 启动状态消息消费者
+        // 启动状态消息消费者（含自动重连）
         let status_consumer = consumer.clone();
         let status_msg_consumer = msg_consumer.clone();
         let status_handle = tokio::spawn(async move {
-            if let Err(e) = status_consumer
-                .consume_status_messages(move |data| {
-                    let consumer = status_msg_consumer.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = consumer.handle_status_message(data).await {
-                            tracing::error!("Failed to handle status message: {}", e);
-                        }
-                    });
-                })
-                .await
-            {
-                tracing::error!("Status consumer error: {}", e);
+            loop {
+                let consumer = status_msg_consumer.clone();
+                let status_cons = status_consumer.clone();
+                if let Err(e) = status_cons
+                    .consume_status_messages(move |data| {
+                        let c = consumer.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = c.handle_status_message(data).await {
+                                tracing::error!("Failed to handle status message: {}", e);
+                            }
+                        });
+                    })
+                    .await
+                {
+                    tracing::error!("Status consumer error: {}. Reconnecting in 5s...", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
             }
         });
 
-        // 启动日志消息消费者
-        let log_msg_consumer = msg_consumer.clone();
+        // 启动日志消息消费者（含自动重连）
+        let log_msg_consumer = msg_consumer;
+        let log_cons = consumer;
         let log_handle = tokio::spawn(async move {
-            if let Err(e) = consumer
-                .consume_log_messages(move |data| {
-                    let consumer = log_msg_consumer.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = consumer.handle_log_message(data).await {
-                            tracing::error!("Failed to handle log message: {}", e);
-                        }
-                    });
-                })
-                .await
-            {
-                tracing::error!("Log consumer error: {}", e);
+            loop {
+                let consumer = log_msg_consumer.clone();
+                let cons = log_cons.clone();
+                if let Err(e) = cons
+                    .consume_log_messages(move |data| {
+                        let c = consumer.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = c.handle_log_message(data).await {
+                                tracing::error!("Failed to handle log message: {}", e);
+                            }
+                        });
+                    })
+                    .await
+                {
+                    tracing::error!("Log consumer error: {}. Reconnecting in 5s...", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
             }
         });
 
@@ -229,7 +254,11 @@ async fn start_rabbitmq_consumer(state: Arc<AppState>) -> tokio::task::JoinHandl
     })
 }
 
-async fn shutdown_signal(timeout_secs: u64, _consumer_handle: tokio::task::JoinHandle<()>) {
+async fn shutdown_signal(
+    timeout_secs: u64,
+    _consumer_handle: tokio::task::JoinHandle<()>,
+    _expiry_handle: tokio::task::JoinHandle<()>,
+) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -259,6 +288,35 @@ async fn shutdown_signal(timeout_secs: u64, _consumer_handle: tokio::task::JoinH
     // Note: consumer_handle will be aborted when the task is dropped
     tokio::time::sleep(tokio::time::Duration::from_secs(timeout_secs)).await;
     tracing::warn!("Graceful shutdown timeout reached, forcing exit");
+}
+
+/// 审批超时自动过期后台任务
+fn start_approval_expiry_task(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let result = sqlx::query(
+                "UPDATE approval_requests SET status = 'timeout', completed_at = NOW()
+                 WHERE status = 'pending' AND expires_at < NOW()"
+            )
+            .execute(&state.db)
+            .await;
+
+            match result {
+                Ok(r) if r.rows_affected() > 0 => {
+                    tracing::info!(
+                        rows = r.rows_affected(),
+                        "Auto-expired approval requests"
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to auto-expire approvals");
+                }
+            }
+        }
+    })
 }
 
 fn print_help() {

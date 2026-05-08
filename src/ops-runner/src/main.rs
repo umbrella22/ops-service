@@ -11,8 +11,9 @@ mod messages;
 mod publisher;
 mod worker;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -69,9 +70,14 @@ async fn main() -> Result<()> {
     print_version();
 
     // 加载配置
-    let config = if args.config.is_some() {
-        // TODO: 从文件加载配置
-        anyhow::bail!("Config file loading not yet implemented, use environment variables");
+    let config = if let Some(path) = &args.config {
+        info!("Loading config from file: {}", path);
+        let content = std::fs::read_to_string(path)
+            .context(format!("Failed to read config file: {}", path))?;
+        match path.ends_with(".json") {
+            true => serde_json::from_str(&content).context("Failed to parse JSON config")?,
+            false => toml::from_str(&content).context("Failed to parse TOML config")?,
+        }
     } else {
         RunnerConfig::from_env()?
     };
@@ -107,20 +113,26 @@ async fn main() -> Result<()> {
     // 获取心跳间隔
     let heartbeat_interval = config.heartbeat_interval();
 
+    // 共享当前作业计数
+    let current_jobs = Arc::new(AtomicUsize::new(0));
+
+    // 配置更新通知通道
+    let _config_update_rx = client.config_update_receiver();
+
     // 启动心跳任务
     let config_for_heartbeat = config.clone();
+    let current_jobs_hb = current_jobs.clone();
     let heartbeat_handle = tokio::spawn(async move {
-        let client = ControlPlaneClient::new(config_for_heartbeat);
+        let mut client = ControlPlaneClient::new(config_for_heartbeat);
+        *client.current_jobs_mut() = current_jobs_hb;
         let mut interval = time::interval(heartbeat_interval);
 
         loop {
             interval.tick().await;
-
             match client.send_heartbeat().await {
                 Ok(config_updated) => {
                     if config_updated {
                         info!("Docker configuration was updated from heartbeat");
-                        // TODO: 通知 executor 重新加载配置
                     }
                 }
                 Err(e) => {

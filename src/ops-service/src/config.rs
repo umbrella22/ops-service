@@ -27,6 +27,13 @@ pub struct DatabaseConfig {
     pub idle_timeout_secs: u64,
     /// 连接最大生命周期（秒）
     pub max_lifetime_secs: u64,
+    /// 数据库不存在时是否自动创建（生产环境应设为 false）
+    #[serde(default = "default_auto_create_db")]
+    pub auto_create_if_missing: bool,
+}
+
+fn default_auto_create_db() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +73,70 @@ pub struct SecurityConfig {
     /// Runner API Key（使用 Secret 包装，用于 Runner 注册和心跳鉴权）
     #[serde(default)]
     pub runner_api_key: Option<SecretString>,
+
+    /// Runner Webhook HMAC 签名密钥（使用 Secret 包装）
+    #[serde(default)]
+    pub runner_webhook_hmac_secret: Option<SecretString>,
+
+    /// Runner Webhook 签名时间戳最大偏差（秒）
+    #[serde(default = "default_webhook_max_skew_secs")]
+    pub runner_webhook_max_skew_secs: u64,
+
+    /// Runner Webhook Nonce 有效期（秒）
+    #[serde(default = "default_webhook_nonce_ttl_secs")]
+    pub runner_webhook_nonce_ttl_secs: u64,
+
+    /// 登录失败速率限制：时间窗口内最大失败次数
+    #[serde(default = "default_login_rate_limit_max_attempts")]
+    pub login_rate_limit_max_attempts: u32,
+
+    /// 登录失败速率限制：滑动窗口时长（秒）
+    #[serde(default = "default_login_rate_limit_window_secs")]
+    pub login_rate_limit_window_secs: u64,
+}
+
+fn default_webhook_max_skew_secs() -> u64 {
+    300
+}
+
+fn default_webhook_nonce_ttl_secs() -> u64 {
+    600
+}
+
+fn default_login_rate_limit_max_attempts() -> u32 {
+    10
+}
+
+fn default_login_rate_limit_window_secs() -> u64 {
+    300
+}
+
+/// Metrics 暴露配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetricsConfig {
+    /// 是否启用 metrics 端点
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 独立绑定地址（可选，如 "127.0.0.1:9090"）
+    #[serde(default)]
+    pub bind_addr: Option<String>,
+    /// 是否要求 IP 白名单
+    #[serde(default)]
+    pub require_whitelist: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bind_addr: None,
+            require_whitelist: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -109,6 +180,9 @@ pub struct AppConfig {
     /// Runner Docker 配置
     #[serde(default)]
     pub runner_docker: RunnerDockerConfig,
+    /// Metrics 暴露配置
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 /// 并发控制配置
@@ -338,27 +412,33 @@ impl AppConfig {
         let mut settings = Config::builder();
 
         // 添加默认配置
-        settings = settings
-            .set_default("server.addr", "0.0.0.0:3000")?
-            .set_default("server.graceful_shutdown_timeout_secs", 30)?
-            .set_default("database.max_connections", 10)?
-            .set_default("database.min_connections", 2)?
-            .set_default("database.acquire_timeout_secs", 30)?
-            .set_default("database.idle_timeout_secs", 600)?
-            .set_default("database.max_lifetime_secs", 1800)?
-            .set_default("logging.level", "info")?
-            .set_default("logging.format", "json")?
-            .set_default("security.jwt_secret", "change-this-secret-in-production-min-32-chars!")?
-            .set_default("security.access_token_exp_secs", 900)?
-            .set_default("security.refresh_token_exp_secs", 604800)?
-            .set_default("security.password_min_length", 8)?
-            .set_default("security.password_require_uppercase", true)?
-            .set_default("security.password_require_digit", true)?
-            .set_default("security.password_require_special", false)?
-            .set_default("security.max_login_attempts", 5)?
-            .set_default("security.login_lockout_duration_secs", 1800)?
-            .set_default("security.rate_limit_rps", 100)?
-            .set_default("security.trust_proxy", true)?
+    settings = settings
+        .set_default("server.addr", "0.0.0.0:3000")?
+        .set_default("server.graceful_shutdown_timeout_secs", 30)?
+        .set_default("database.max_connections", 10)?
+        .set_default("database.min_connections", 2)?
+        .set_default("database.acquire_timeout_secs", 30)?
+        .set_default("database.idle_timeout_secs", 600)?
+        .set_default("database.max_lifetime_secs", 1800)?
+        .set_default("database.auto_create_if_missing", true)?
+        .set_default("logging.level", "info")?
+        .set_default("logging.format", "json")?
+        .set_default("security.jwt_secret", "change-this-secret-in-production-min-32-chars!")?
+        .set_default("security.access_token_exp_secs", 900)?
+        .set_default("security.refresh_token_exp_secs", 604800)?
+        .set_default("security.password_min_length", 8)?
+        .set_default("security.password_require_uppercase", true)?
+        .set_default("security.password_require_digit", true)?
+        .set_default("security.password_require_special", false)?
+        .set_default("security.max_login_attempts", 5)?
+        .set_default("security.login_lockout_duration_secs", 1800)?
+        .set_default("security.rate_limit_rps", 100)?
+        .set_default("security.trust_proxy", true)?
+        .set_default("security.login_rate_limit_max_attempts", 10)?
+        .set_default("security.login_rate_limit_window_secs", 300)?
+        // Metrics 默认配置
+        .set_default("metrics.enabled", true)?
+        .set_default("metrics.require_whitelist", false)?
             // SSH 默认配置
             .set_default("ssh.default_username", "root")?
             .set_default("ssh.default_password", "")?

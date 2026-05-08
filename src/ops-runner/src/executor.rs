@@ -511,6 +511,13 @@ impl BuildExecutor {
     ) -> Result<()> {
         info!("Cloning repository: {} (branch: {})", project.repository_url, project.branch);
 
+        // 处理 file:// 协议：去掉前缀使用本地路径
+        let repo_url = if project.repository_url.starts_with("file://") {
+            project.repository_url.strip_prefix("file://").unwrap()
+        } else {
+            &project.repository_url
+        };
+
         let output = Command::new("git")
             .args([
                 "clone",
@@ -518,7 +525,7 @@ impl BuildExecutor {
                 "1",
                 "--branch",
                 &project.branch,
-                &project.repository_url,
+                repo_url,
                 workspace.to_str().unwrap(),
             ])
             .output()

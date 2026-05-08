@@ -172,6 +172,10 @@ pub struct BuildStatusMessage {
     /// Runner 名称
     pub runner_name: String,
 
+    /// 尝试 ID（同一作业的多次重试有不同的 attempt_id）
+    #[serde(default)]
+    pub attempt_id: Option<Uuid>,
+
     /// 状态
     pub status: BuildStatus,
 
@@ -291,6 +295,10 @@ pub struct BuildLogMessage {
     /// Runner 名称
     pub runner_name: String,
 
+    /// 尝试 ID（同一作业的多次重试有不同的 attempt_id）
+    #[serde(default)]
+    pub attempt_id: Option<Uuid>,
+
     /// 日志级别
     #[serde(default)]
     pub level: LogLevel,
@@ -298,8 +306,12 @@ pub struct BuildLogMessage {
     /// 日志内容（支持增量）
     pub content: String,
 
-    /// 偏移量（用于增量日志）
+    /// 字节偏移量（用于增量日志拼接）
     pub offset: u64,
+
+    /// 块序号（用于乱序检测和重排序）
+    #[serde(default)]
+    pub chunk_index: u64,
 
     /// 是否为最后一条日志
     #[serde(default)]

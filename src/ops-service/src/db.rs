@@ -19,10 +19,17 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<PgPool, DbError> {
     let pool = match connect_pool(config, db_url).await {
         Ok(pool) => pool,
         Err(e) if is_missing_database_error(&e) => {
-            ensure_database_exists(db_url).await?;
-            connect_pool(config, db_url)
-                .await
-                .map_err(|e| DbError::ConnectionFailed(e.to_string()))?
+            if config.auto_create_if_missing {
+                tracing::warn!("Database does not exist but auto_create_if_missing is enabled, attempting to create it");
+                ensure_database_exists(db_url).await?;
+                connect_pool(config, db_url)
+                    .await
+                    .map_err(|e| DbError::ConnectionFailed(e.to_string()))?
+            } else {
+                return Err(DbError::ConnectionFailed(
+                    "Database does not exist and auto_create_if_missing is disabled. Please create the database manually.".to_string(),
+                ));
+            }
         }
         Err(e) => return Err(DbError::ConnectionFailed(e.to_string())),
     };

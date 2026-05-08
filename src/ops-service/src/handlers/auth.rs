@@ -14,7 +14,21 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let client_ip = get_client_ip(&headers).unwrap_or("unknown".to_string());
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string());
+
+    // 如果不信任代理，忽略代理头，从 request extensions 获取
+    let client_ip = if state.config.security.trust_proxy {
+        client_ip
+    } else {
+        None
+    }
+    .unwrap_or("unknown".to_string());
+
     let user_agent = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
@@ -34,7 +48,7 @@ pub async fn refresh_token(
     headers: HeaderMap,
     Json(req): Json<RefreshTokenRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let client_ip = get_client_ip(&headers).unwrap_or("unknown".to_string());
+    let client_ip = get_client_ip_str(&headers, state.config.security.trust_proxy);
 
     let token_pair = state.auth_service.refresh_token(req, &client_ip).await?;
 
@@ -103,27 +117,28 @@ pub async fn get_current_user(auth_context: AuthContext) -> Result<impl IntoResp
     })))
 }
 
-/// 获取客户端 IP 地址
-fn get_client_ip(headers: &HeaderMap) -> Option<String> {
-    // 首先检查 X-Forwarded-For（代理情况）
+/// 获取客户端 IP 地址字符串（统一版本）
+/// 当 trust_proxy 为 false 时忽略代理头，使用默认值
+fn get_client_ip_str(headers: &HeaderMap, trust_proxy: bool) -> String {
+    if !trust_proxy {
+        return "unknown".to_string();
+    }
+
     if let Some(forwarded) = headers.get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded.to_str() {
-            // X-Forwarded-For 可能包含多个 IP，取第一个
             if let Some(first_ip) = forwarded_str.split(',').next() {
-                return Some(first_ip.trim().to_string());
+                return first_ip.trim().to_string();
             }
         }
     }
 
-    // 然后检查 X-Real-IP
     if let Some(real_ip) = headers.get("x-real-ip") {
         if let Ok(ip_str) = real_ip.to_str() {
-            return Some(ip_str.to_string());
+            return ip_str.to_string();
         }
     }
 
-    // 最后使用连接的远程地址（在 handler 中通常由 Axum 自动处理）
-    None
+    "unknown".to_string()
 }
 
 #[cfg(test)]
@@ -135,8 +150,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "192.168.1.1, 10.0.0.1".parse().unwrap());
 
-        let ip = get_client_ip(&headers);
-        assert_eq!(ip, Some("192.168.1.1".to_string()));
+        let ip = get_client_ip_str(&headers, true);
+        assert_eq!(ip, "192.168.1.1");
     }
 
     #[test]
@@ -144,7 +159,16 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "192.168.1.2".parse().unwrap());
 
-        let ip = get_client_ip(&headers);
-        assert_eq!(ip, Some("192.168.1.2".to_string()));
+        let ip = get_client_ip_str(&headers, true);
+        assert_eq!(ip, "192.168.1.2");
+    }
+
+    #[test]
+    fn test_get_client_ip_trust_proxy_false() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
+
+        let ip = get_client_ip_str(&headers, false);
+        assert_eq!(ip, "unknown");
     }
 }

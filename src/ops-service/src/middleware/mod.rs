@@ -1,5 +1,7 @@
 //! HTTP 中间件
-//! 请求追踪、速率限制、IP 白名单
+//! 请求追踪、速率限制、IP 白名单、webhook HMAC 鉴权
+
+pub mod webhook_hmac;
 
 use axum::{
     extract::{Request, State},
@@ -12,11 +14,24 @@ use secrecy::ExposeSecret;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::Instrument;
 use uuid::Uuid;
+
+/// 统一请求上下文
+///
+/// 包含请求级别的追踪信息，贯通中间件、handler、错误响应和审计日志
+#[derive(Debug, Clone)]
+pub struct RequestContext {
+    pub request_id: String,
+    pub trace_id: String,
+    pub client_ip: Option<IpAddr>,
+    pub user_agent: Option<String>,
+    pub auth_subject: Option<String>,
+}
 
 /// 应用状态
 ///
@@ -49,22 +64,40 @@ pub struct AppState {
     pub runner_scheduler: Arc<crate::services::RunnerScheduler>,
     /// 存储服务 (P2.1)
     pub storage_service: Arc<crate::services::StorageService>,
+    /// Webhook Nonce 防重放存储
+    pub webhook_nonce_store: Option<Arc<webhook_hmac::NonceStore>>,
+    /// Runner 配置版本号（单调递增，供 Runner 检测配置变更）
+    pub runner_config_version: Arc<AtomicU64>,
 }
 
 /// 请求追踪中间件
 /// 为每个请求生成 trace_id 和 request_id，并记录指标
-pub async fn request_tracking_middleware(req: Request, next: Next) -> Response {
-    // 生成或提取 trace_id/request_id
+pub async fn request_tracking_middleware(mut req: Request, next: Next) -> Response {
     let trace_id = extract_or_generate_trace_id(req.headers());
     let request_id = Uuid::new_v4().to_string();
 
-    // 获取请求方法和路径
     let method = req.method().to_string();
-    let _method_static = method.as_str(); // 用于日志
-    let method_for_metrics = req.method().to_string(); // 用于 metrics 的副本
+    let _method_static = method.as_str();
+    let method_for_metrics = req.method().to_string();
     let uri = req.uri().to_string();
 
-    // 创建 span
+    // 提取 User-Agent
+    let user_agent = req
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // 创建 RequestContext 并注入 extensions
+    let request_context = RequestContext {
+        request_id: request_id.clone(),
+        trace_id: trace_id.clone(),
+        client_ip: None,
+        user_agent,
+        auth_subject: None,
+    };
+    req.extensions_mut().insert(request_context);
+
     let span = tracing::info_span!(
         "http_request",
         trace_id = %trace_id,
@@ -76,7 +109,6 @@ pub async fn request_tracking_middleware(req: Request, next: Next) -> Response {
     async move {
         let start = Instant::now();
 
-        // 继续处理请求
         let response = next.run(req).await;
 
         let elapsed = start.elapsed();
@@ -117,8 +149,12 @@ pub async fn request_tracking_middleware(req: Request, next: Next) -> Response {
 
         // 在响应头中添加 trace_id
         let mut response = response;
-        response.headers_mut().insert("x-trace-id", trace_id.parse().unwrap());
-        response.headers_mut().insert("x-request-id", request_id.parse().unwrap());
+        if let Ok(v) = trace_id.parse() {
+            response.headers_mut().insert("x-trace-id", v);
+        }
+        if let Ok(v) = request_id.parse() {
+            response.headers_mut().insert("x-request-id", v);
+        }
 
         response
     }
@@ -172,6 +208,11 @@ pub async fn rate_limit_middleware(
     // 将 IP 添加到请求扩展，以便后续使用
     req.extensions_mut().insert(client_ip);
 
+    // 同时更新 RequestContext 中的 client_ip
+    if let Some(ctx) = req.extensions_mut().get_mut::<RequestContext>() {
+        ctx.client_ip = Some(client_ip);
+    }
+
     Ok(next.run(req).await)
 }
 
@@ -201,13 +242,13 @@ pub async fn ip_whitelist_middleware(
 
 /// 获取客户端 IP 地址（返回字符串）
 #[allow(dead_code)]
-fn get_client_ip(req: &Request, trust_proxy: bool) -> Result<String, crate::error::AppError> {
+pub fn get_client_ip(req: &Request, trust_proxy: bool) -> Result<String, crate::error::AppError> {
     get_client_ip_with_addr(req, trust_proxy).map(|ip| ip.to_string())
 }
 
 /// 获取客户端 IP 地址（返回 IpAddr）
 /// 支持从代理头和连接信息获取真实 IP
-fn get_client_ip_with_addr(
+pub fn get_client_ip_with_addr(
     req: &Request,
     trust_proxy: bool,
 ) -> Result<IpAddr, crate::error::AppError> {
@@ -317,25 +358,23 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            max_requests: NonZeroU32::new(100).unwrap(), // 100请求/分钟
-            window_secs: NonZeroU32::new(60).unwrap(),
-            login_max_requests: NonZeroU32::new(10).unwrap(), // 10请求/5分钟
-            login_window_secs: NonZeroU32::new(300).unwrap(),
+            max_requests: NonZeroU32::new(100).unwrap_or(NonZeroU32::MIN),
+            window_secs: NonZeroU32::new(60).unwrap_or(NonZeroU32::MIN),
+            login_max_requests: NonZeroU32::new(10).unwrap_or(NonZeroU32::MIN),
+            login_window_secs: NonZeroU32::new(300).unwrap_or(NonZeroU32::MIN),
         }
     }
 }
 
 impl RateLimitConfig {
     /// 从安全配置构造限流配置
-    /// rate_limit_rps 表示每秒最大请求数，换算为每分钟窗口
     pub fn from_security_config(security: &crate::config::SecurityConfig) -> Self {
         let rps = security.rate_limit_rps.max(1);
         Self {
-            max_requests: NonZeroU32::new((rps * 60) as u32)
-                .unwrap_or(NonZeroU32::new(100).unwrap()),
-            window_secs: NonZeroU32::new(60).unwrap(),
-            login_max_requests: NonZeroU32::new(10).unwrap(),
-            login_window_secs: NonZeroU32::new(300).unwrap(),
+            max_requests: NonZeroU32::new((rps * 60) as u32).unwrap_or(NonZeroU32::MIN),
+            window_secs: NonZeroU32::new(60).unwrap_or(NonZeroU32::MIN),
+            login_max_requests: NonZeroU32::new(10).unwrap_or(NonZeroU32::MIN),
+            login_window_secs: NonZeroU32::new(300).unwrap_or(NonZeroU32::MIN),
         }
     }
 }

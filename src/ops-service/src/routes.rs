@@ -1,113 +1,25 @@
 //! 路由注册
 //! 创建所有 API 路由并应用中间件
+//!
+//! 注意：create_router 仅负责路由装配，所有服务实例由 main 统一创建并通过 AppState 传入。
+//! 不再在此处重复创建服务实例，确保单例语义与状态来源单一。
 
 use axum::{
     routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::{
-    auth::JwtService,
     handlers,
-    middleware::{AppState, IpRateLimiter, RateLimitConfig},
-    rabbitmq::RabbitMqPublisherPool,
-    realtime::EventBus,
-    services::{
-        ApprovalService, AuditService, AuthService, JobService, PermissionService, RunnerScheduler,
-        StorageService,
-    },
+    middleware::AppState,
 };
 
-// 导出 runner_auth_middleware
 use crate::middleware::runner_auth_middleware;
 
 /// 创建应用路由
+/// state 由 main 统一装配，包含所有服务实例
 pub fn create_router(state: Arc<AppState>) -> Router {
-    // 创建所有服务
-    let jwt_service =
-        Arc::new(JwtService::from_config(&state.config).expect("Failed to create JWT service"));
-
-    let auth_service = Arc::new(AuthService::new(
-        state.db.clone(),
-        jwt_service.clone(),
-        Arc::new(state.config.clone()),
-    ));
-
-    let permission_service = Arc::new(PermissionService::new(state.db.clone()));
-    let audit_service = Arc::new(AuditService::new(state.db.clone()));
-
-    // 创建并发控制器（从配置加载）
-    let strategy = match state.config.concurrency.strategy.to_lowercase().as_str() {
-        "reject" => crate::concurrency::ConcurrencyStrategy::Reject,
-        "queue" => crate::concurrency::ConcurrencyStrategy::Queue,
-        _ => crate::concurrency::ConcurrencyStrategy::Wait,
-    };
-
-    let concurrency_config = crate::concurrency::ConcurrencyConfig {
-        global_limit: state.config.concurrency.global_limit,
-        group_limit: state.config.concurrency.group_limit,
-        environment_limit: state.config.concurrency.environment_limit,
-        production_limit: state.config.concurrency.production_limit,
-        acquire_timeout_secs: state.config.concurrency.acquire_timeout_secs,
-        strategy,
-        queue_max_length: state.config.concurrency.queue_max_length,
-    };
-
-    let concurrency_controller =
-        std::sync::Arc::new(crate::concurrency::ConcurrencyController::new(concurrency_config));
-
-    let job_service = Arc::new(JobService::new(
-        state.db.clone(),
-        concurrency_controller.clone(),
-        audit_service.clone(),
-        state.config.ssh.clone(),
-    ));
-
-    // 创建事件总线 (P3 实时能力)
-    let event_bus = Arc::new(EventBus::new(1000));
-
-    // 创建审批服务 (P3 审批流)
-    let approval_service =
-        Arc::new(ApprovalService::new(state.db.clone(), audit_service.clone(), event_bus.clone()));
-
-    // 创建 RabbitMQ 发布器池 (P2.1)
-    let rabbitmq_publisher = Arc::new(RabbitMqPublisherPool::new(state.config.rabbitmq.clone()));
-
-    // 创建完整的 AppState
-    // 初始化 Runner Docker 配置缓存
-    let runner_docker_config_cache = Arc::new(RwLock::new(state.config.runner_docker.clone()));
-
-    // 初始化 Runner 调度服务
-    let runner_scheduler = Arc::new(RunnerScheduler::new(state.db.clone()));
-
-    // 初始化存储服务
-    let storage_service = Arc::new(StorageService::from_env().unwrap_or_else(|e| {
-        tracing::warn!("Failed to load storage config from env: {}. Using default.", e);
-        StorageService::new(crate::services::StorageConfig::default())
-    }));
-
-    let full_state = Arc::new(AppState {
-        config: state.config.clone(),
-        db: state.db.clone(),
-        auth_service,
-        permission_service,
-        audit_service,
-        jwt_service: jwt_service.clone(),
-        job_service,
-        approval_service,
-        event_bus,
-        concurrency_controller,
-        rate_limiter: Arc::new(IpRateLimiter::new(RateLimitConfig::from_security_config(
-            &state.config.security,
-        ))),
-        rabbitmq_publisher,
-        runner_docker_config_cache,
-        runner_scheduler,
-        storage_service,
-    });
-
     // 公开端点（健康检查）
     let public_routes = Router::new()
         .route("/health", get(handlers::health::health_check))
@@ -116,7 +28,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     // Runner Webhook 路由（使用 Runner API Key 鉴权）
     let runner_routes = Router::new()
-        // Runner 注册（兼容 ops-runner 调用路径）
         .route(
             "/api/v1/runners/register",
             post(handlers::runner::register_runner)
@@ -125,7 +36,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/webhooks/runner/register",
             post(handlers::runner::register_runner)
         )
-        // Runner 心跳（兼容 ops-runner 调用路径）
         .route(
             "/api/v1/runners/heartbeat",
             post(handlers::runner::runner_heartbeat)
@@ -139,23 +49,24 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             runner_auth_middleware,
         ));
 
-    // 其他 Webhook 路由（公开，但应在反向代理层做 IP 白名单限制）
+    // 构建 Webhook 路由（使用 HMAC 签名鉴权）
     let webhook_routes = Router::new()
-        // 构建状态更新
         .route(
             "/api/v1/webhooks/build/status",
             post(handlers::build_webhook::build_status_webhook)
         )
-        // 构建日志
         .route(
             "/api/v1/webhooks/build/log",
             post(handlers::build_webhook::build_log_webhook)
         )
-        // 构建产物元数据
         .route(
             "/api/v1/webhooks/build/artifact",
             post(handlers::build_webhook::build_artifact_webhook)
-        );
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::webhook_hmac::build_webhook_hmac_middleware,
+        ));
 
     // 认证路由（无需认证，但应用速率限制）
     let auth_routes = Router::new()
@@ -411,14 +322,28 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(handlers::artifact::get_download_history)
         )
         .layer(axum::middleware::from_fn_with_state(
-            jwt_service.clone(),
+            state.jwt_service.clone(),
             crate::auth::middleware::jwt_auth_middleware,
         ));
 
-    // 指标端点
-    let metrics_routes = Router::new()
-        .route("/metrics", get(handlers::metrics::metrics_export))
-        .route("/metrics.json", get(handlers::metrics::metrics_json));
+    // 指标端点（按配置决定是否暴露）
+    let metrics_routes = if state.config.metrics.enabled {
+        let router = Router::new()
+            .route("/metrics", get(handlers::metrics::metrics_export))
+            .route("/metrics.json", get(handlers::metrics::metrics_json));
+
+        // 如果配置了 require_whitelist，包裹在 IP 白名单中间件中
+        if state.config.metrics.require_whitelist {
+            router.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::middleware::ip_whitelist_middleware,
+            ))
+        } else {
+            router
+        }
+    } else {
+        Router::new()
+    };
 
     // 组合所有路由
     Router::new()
@@ -429,13 +354,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(authenticated_routes)
         .merge(metrics_routes)
         .layer(axum::middleware::from_fn_with_state(
-            full_state.clone(),
+            state.clone(),
             crate::middleware::ip_whitelist_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            full_state.clone(),
+            state.clone(),
             crate::middleware::rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn(crate::middleware::request_tracking_middleware))
-        .with_state(full_state)
+        .with_state(state)
 }

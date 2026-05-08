@@ -232,6 +232,8 @@ pub async fn create_runner_config(
         )
         .await;
 
+    state.runner_config_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     Ok((StatusCode::CREATED, Json::<RunnerDockerConfigResponse>(config.into())))
 }
 
@@ -432,6 +434,8 @@ pub async fn update_runner_config(
             None,
         )
         .await;
+
+    state.runner_config_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     Ok(Json::<RunnerDockerConfigResponse>(new_config.into()))
 }

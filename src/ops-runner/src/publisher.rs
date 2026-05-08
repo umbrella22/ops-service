@@ -32,7 +32,10 @@ impl MessagePublisher {
             .exchange_declare(
                 short_string(exchange.clone()),
                 ExchangeKind::Topic,
-                ExchangeDeclareOptions::default(),
+                ExchangeDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
                 FieldTable::default(),
             )
             .await
@@ -62,6 +65,7 @@ impl MessagePublisher {
             task_id: task.task_id,
             job_id: task.job_id,
             runner_name: self.runner_name.clone(),
+            attempt_id: None,
             status: status.clone(),
             step_status,
             error,
@@ -189,9 +193,11 @@ impl MessagePublisher {
             job_id: task.job_id,
             step_id: step.id.clone(),
             runner_name: self.runner_name.clone(),
+            attempt_id: None,
             level,
             content: content.to_string(),
             offset,
+            chunk_index: 0,
             is_final,
             timestamp: chrono::Utc::now(),
         };
@@ -275,6 +281,7 @@ impl MessagePublisher {
             task_id: task.task_id,
             job_id: task.job_id,
             runner_name: self.runner_name.clone(),
+            attempt_id: None,
             status: BuildStatus::Running,
             step_status: Some(step_update),
             error: None,

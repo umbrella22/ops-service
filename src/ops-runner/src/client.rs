@@ -3,9 +3,11 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use reqwest::Client;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::config::RunnerConfig;
@@ -20,6 +22,10 @@ pub struct ControlPlaneClient {
     runner_id: Option<String>,
     /// 从控制面接收的 Docker 配置
     docker_config: Arc<TokioMutex<Option<RunnerDockerConfig>>>,
+    /// 当前正在执行的作业数（由 Worker 更新）
+    current_jobs: Arc<AtomicUsize>,
+    /// 配置变更通知通道 (心跳 -> executor)
+    config_update_tx: watch::Sender<Option<RunnerDockerConfig>>,
 }
 
 impl ControlPlaneClient {
@@ -30,12 +36,31 @@ impl ControlPlaneClient {
             .build()
             .unwrap();
 
+        let (config_update_tx, _) = watch::channel(None);
+
         Self {
             client,
             config,
             runner_id: None,
             docker_config: Arc::new(TokioMutex::new(None)),
+            current_jobs: Arc::new(AtomicUsize::new(0)),
+            config_update_tx,
         }
+    }
+
+    /// 设置当前作业数（由 Worker 调用）
+    pub fn set_current_jobs(&self, count: usize) {
+        self.current_jobs.store(count, Ordering::Relaxed);
+    }
+
+    /// 获取配置变更通知接收端
+    pub fn config_update_receiver(&self) -> watch::Receiver<Option<RunnerDockerConfig>> {
+        self.config_update_tx.subscribe()
+    }
+
+    /// 获取/设置当前作业计数器的可变引用（供外部注入共享计数器）
+    pub fn current_jobs_mut(&mut self) -> &mut Arc<AtomicUsize> {
+        &mut self.current_jobs
     }
 
     /// 获取 Docker 配置（从控制面接收）
@@ -45,7 +70,9 @@ impl ControlPlaneClient {
 
     /// 设置 Docker 配置
     pub async fn set_docker_config(&self, config: RunnerDockerConfig) {
-        *self.docker_config.lock().await = Some(config);
+        let config = Some(config);
+        *self.docker_config.lock().await = config.clone();
+        let _ = self.config_update_tx.send(config);
     }
 
     /// 注册 Runner
@@ -153,7 +180,7 @@ impl ControlPlaneClient {
         let msg = RunnerHeartbeatMessage {
             name: self.config.runner.name.clone(),
             status: RunnerStatus::Active,
-            current_jobs: 0, // TODO: 从执行引擎获取实际值
+            current_jobs: self.current_jobs.load(Ordering::Relaxed),
             last_error: None,
             system: system_info,
             timestamp: Utc::now(),

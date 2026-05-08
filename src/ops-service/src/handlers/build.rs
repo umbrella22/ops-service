@@ -288,32 +288,56 @@ pub async fn create_build_job(
     }
 
     let job_id = Uuid::new_v4();
-    let commit = request.commit.unwrap_or_else(|| "latest".to_string());
+    let commit = request.commit.filter(|c| !c.is_empty()).unwrap_or_else(|| "".to_string());
     let now = Utc::now();
 
-    // 将请求转换为 JSON 存储到数据库
-    let steps_json = serde_json::to_value(&request.steps)
+    // 将步骤序列化用于 build_parameters
+    let build_params = serde_json::to_value(&request.steps)
         .map_err(|e| AppError::internal_error(&format!("Failed to serialize steps: {}", e)))?;
 
     // 插入构建作业记录
+    // 注意: build_jobs 表需要先有一个 parent jobs 记录
+    let parent_job_id = Uuid::new_v4();
+    
+    // 先创建 parent jobs 记录
     sqlx::query(
-        "INSERT INTO build_jobs (id, project_name, repository_url, branch, commit, build_type, \
-         env_vars, parameters, steps, status, created_by, created_at, tags)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        "INSERT INTO jobs (id, job_type, name, description, status, target_hosts, target_groups, \
+         total_tasks, created_by, tags)
+         VALUES ($1, 'build'::job_type, $2, $3, 'pending'::job_status, '{}'::jsonb, '{}'::jsonb, 1, $4, $5)",
+    )
+    .bind(parent_job_id)
+    .bind(&request.project_name)
+    .bind(&format!("Build: {}", request.project_name))
+    .bind(auth.user_id)
+    .bind(serde_json::to_value(&request.tags).unwrap_or(serde_json::json!([])))
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "Failed to create parent job record");
+        AppError::database("Failed to create parent job")
+    })?;
+
+    // 插入 build_jobs 记录
+    sqlx::query(
+        "INSERT INTO build_jobs (id, job_id, repository, branch, commit_hash, build_type, \
+         build_parameters, runner_capability, status, triggered_by, tags)
+         VALUES ($1, $2, $3, $4, $5, CAST($6 AS build_type), $7, CAST($8 AS runner_capability), CAST($9 AS job_status), $10, $11)",
     )
     .bind(job_id)
-    .bind(&request.project_name)
+    .bind(parent_job_id)
     .bind(&request.repository_url)
     .bind(&request.branch)
     .bind(&commit)
     .bind(&request.build_type)
-    .bind(serde_json::to_value(&request.env_vars).unwrap_or(serde_json::json!(null)))
-    .bind(serde_json::to_value(&request.parameters).unwrap_or(serde_json::json!(null)))
-    .bind(&steps_json)
+    .bind(serde_json::json!({
+        "steps": build_params,
+        "parameters": request.parameters,
+        "env_vars": request.env_vars,
+    }))
+    .bind(&request.build_type) // runner_capability mirrors build_type for now
     .bind("pending")
     .bind(auth.user_id)
-    .bind(now)
-    .bind(serde_json::to_value(&request.tags).unwrap_or(serde_json::json!(null)))
+    .bind(serde_json::to_value(&request.tags).unwrap_or(serde_json::json!([])))
     .execute(&state.db)
     .await
     .map_err(|e| {
@@ -466,23 +490,25 @@ pub async fn list_build_jobs(
         .await
         .unwrap_or(false);
 
-    // 构建查询
+    // 构建查询 — JOIN jobs 表以获取项目名等字段
     let query = if is_admin {
-        // 管理员可以看到所有作业
-        "SELECT id, project_name, repository_url, branch, commit, build_type, status,
-                created_at, started_at, completed_at, created_by
-         FROM build_jobs
-         ORDER BY created_at DESC
+        "SELECT bj.id, j.name AS project_name, bj.repository AS repository_url, \
+                bj.branch, bj.commit_hash AS commit, bj.build_type::text, bj.status::text, \
+                bj.created_at, bj.started_at, bj.completed_at, bj.triggered_by AS created_by
+         FROM build_jobs bj
+         JOIN jobs j ON j.id = bj.job_id
+         ORDER BY bj.created_at DESC
          LIMIT 100"
             .to_string()
     } else {
-        // 普通用户只能看到自己创建的作业
         format!(
-            "SELECT id, project_name, repository_url, branch, commit, build_type, status,
-                    created_at, started_at, completed_at, created_by
-             FROM build_jobs
-             WHERE created_by = '{}'
-             ORDER BY created_at DESC
+            "SELECT bj.id, j.name AS project_name, bj.repository AS repository_url, \
+                    bj.branch, bj.commit_hash AS commit, bj.build_type::text, bj.status::text, \
+                    bj.created_at, bj.started_at, bj.completed_at, bj.triggered_by AS created_by
+             FROM build_jobs bj
+             JOIN jobs j ON j.id = bj.job_id
+             WHERE bj.triggered_by = '{}'
+             ORDER BY bj.created_at DESC
              LIMIT 100",
             auth.user_id
         )
@@ -558,7 +584,7 @@ pub async fn get_build_job(
         commit: String,
         build_type: String,
         status: String,
-        steps: serde_json::Value,
+        build_parameters: serde_json::Value,
         created_at: chrono::DateTime<chrono::Utc>,
         started_at: Option<chrono::DateTime<chrono::Utc>>,
         completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -567,10 +593,13 @@ pub async fn get_build_job(
     }
 
     let job: BuildJobRow = sqlx::query_as(
-        "SELECT id, project_name, repository_url, branch, commit, build_type, status,
-                steps, created_at, started_at, completed_at, created_by, tags
-         FROM build_jobs
-         WHERE id = $1",
+        "SELECT bj.id, j.name AS project_name, bj.repository AS repository_url,
+                bj.branch, bj.commit_hash AS commit, bj.build_type::text, bj.status::text,
+                bj.build_parameters, bj.created_at, bj.started_at, bj.completed_at,
+                bj.triggered_by AS created_by, bj.tags
+         FROM build_jobs bj
+         JOIN jobs j ON j.id = bj.job_id
+         WHERE bj.id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -592,8 +621,11 @@ pub async fn get_build_job(
     }
 
     // 解析步骤
-    let steps_request: Vec<BuildStepRequest> =
-        serde_json::from_value(job.steps).unwrap_or_default();
+    let steps_request: Vec<BuildStepRequest> = job
+        .build_parameters
+        .get("steps")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
 
     // 查询步骤状态
     #[derive(sqlx::FromRow)]
@@ -607,7 +639,7 @@ pub async fn get_build_job(
     }
 
     let step_statuses: Vec<StepStatusRow> = sqlx::query_as(
-        "SELECT step_id, status, started_at, completed_at, exit_code, error
+        "SELECT step_id, status::text, started_at, completed_at, exit_code, error
          FROM build_steps
          WHERE job_id = $1
          ORDER BY created_at",
@@ -706,7 +738,7 @@ pub async fn get_build_steps(
     }
 
     let steps: Vec<StepRow> = sqlx::query_as(
-        "SELECT step_id, step_name, status, started_at, completed_at, exit_code, error, created_at
+        "SELECT step_id, step_name, status::text, started_at, completed_at, exit_code, error, created_at
          FROM build_steps
          WHERE job_id = $1
          ORDER BY created_at",
@@ -737,7 +769,7 @@ pub async fn cancel_build_job(
         .await?;
 
     // 查询作业
-    let job = sqlx::query("SELECT created_by, status FROM build_jobs WHERE id = $1")
+    let job = sqlx::query("SELECT triggered_by, status::text FROM build_jobs WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await

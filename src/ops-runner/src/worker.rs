@@ -47,12 +47,15 @@ impl TaskWorker {
             .await
             .context("Failed to create channel")?;
 
-        // 声明交换机
+        // 声明交换机（与服务端一致使用 durable）
         channel
             .exchange_declare(
                 short_string(config.message_queue.exchange.clone()),
                 ExchangeKind::Topic,
-                ExchangeDeclareOptions::default(),
+                ExchangeDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
                 FieldTable::default(),
             )
             .await

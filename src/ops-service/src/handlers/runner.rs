@@ -286,7 +286,7 @@ async fn get_runner_docker_config(
 
         let enabled: bool = row.get("enabled");
         let default_image: String = row.get("default_image");
-        let default_timeout_secs: i64 = row.get("default_timeout_secs");
+        let default_timeout_secs: i32 = row.get("default_timeout_secs");
         let memory_limit_gb: Option<i64> = row.get("memory_limit_gb");
         let cpu_shares: Option<i64> = row.get("cpu_shares");
         let pids_limit: Option<i64> = row.get("pids_limit");
@@ -545,7 +545,7 @@ pub async fn runner_heartbeat(
 
     let response = RunnerHeartbeatResponse {
         docker: docker_config,
-        config_version: Some(0), // TODO: 实现配置版本管理
+        config_version: Some(state.runner_config_version.load(std::sync::atomic::Ordering::Relaxed) as i64),
         server_timestamp: Utc::now(),
     };
 

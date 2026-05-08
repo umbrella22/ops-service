@@ -14,6 +14,7 @@ use crate::models::job::*;
 use crate::output::OutputArchive;
 use crate::realtime::EventBus;
 use crate::services::audit_service::{AuditAction, AuditService};
+use crate::services::ApprovalService;
 use crate::ssh::{HostKeyVerification, SSHClient, SshAuth, SshConfig};
 use secrecy::ExposeSecret;
 
@@ -24,6 +25,7 @@ pub struct JobService {
     audit_service: Arc<AuditService>,
     ssh_config: AppSshConfig,
     event_bus: Arc<EventBus>,
+    approval_service: Option<Arc<ApprovalService>>,
 }
 
 impl JobService {
@@ -40,12 +42,19 @@ impl JobService {
             audit_service,
             ssh_config,
             event_bus: Arc::new(EventBus::new(1000)),
+            approval_service: None,
         }
     }
 
     /// 设置事件总线（用于外部注入）
     pub fn with_event_bus(mut self, event_bus: Arc<EventBus>) -> Self {
         self.event_bus = event_bus;
+        self
+    }
+
+    /// 设置审批服务（用于审批闭环）
+    pub fn with_approval_service(mut self, approval_service: Arc<ApprovalService>) -> Self {
+        self.approval_service = Some(approval_service);
         self
     }
 
@@ -158,12 +167,28 @@ impl JobService {
                 AuditAction::JobCreate,
                 Some("job"),
                 Some(job_id),
-                Some("Command failed"),
+                Some("Command job created"),
                 None,
             )
             .await?;
 
         info!(job_id = %job_id, "Command job created successfully");
+
+        // 审批检查：如果需要审批，将作业状态设为 awaiting_approval
+        if let Some(ref approval_svc) = self.approval_service {
+            if approval_svc.check_job_requires_approval(&job, &target_hosts).await? {
+                info!(job_id = %job_id, "Job requires approval, setting status to awaiting_approval");
+                sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
+                    .bind(job_id)
+                    .execute(&self.db)
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "Failed to update job status");
+                        AppError::database("Failed to update job status")
+                    })?;
+                return Ok(job);
+            }
+        }
 
         // 异步启动作业执行
         let db_clone = self.db.clone();
@@ -305,6 +330,22 @@ impl JobService {
             .await?;
 
         info!(job_id = %job_id, "Script job created successfully");
+
+        // 审批检查：如果需要审批，将作业状态设为 awaiting_approval
+        if let Some(ref approval_svc) = self.approval_service {
+            if approval_svc.check_job_requires_approval(&job, &target_hosts).await? {
+                info!(job_id = %job_id, "Script job requires approval, setting status to awaiting_approval");
+                sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
+                    .bind(job_id)
+                    .execute(&self.db)
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "Failed to update job status");
+                        AppError::database("Failed to update job status")
+                    })?;
+                return Ok(job);
+            }
+        }
 
         // 异步启动作业执行
         let db_clone = self.db.clone();
@@ -1017,7 +1058,10 @@ impl JobService {
             let event_bus_clone = event_bus.clone();
 
             let handle = tokio::spawn(async move {
-                let _permit = semaphore_clone.acquire().await.unwrap();
+                let _permit = semaphore_clone.acquire().await.unwrap_or_else(|_| {
+                    tracing::error!("Semaphore closed unexpectedly");
+                    std::process::abort();
+                });
                 Self::execute_task(
                     task,
                     job_clone,
@@ -1157,7 +1201,7 @@ impl JobService {
         } else if host.ssh_password.is_some() {
             // 主机配置了密码
             SshAuth::Password {
-                password: host.ssh_password.clone().unwrap(),
+                password: host.ssh_password.clone().unwrap_or_default(),
             }
         } else if let Some(global_private_key) = &ssh_config.default_private_key {
             // 使用全局私钥

@@ -1,5 +1,5 @@
 # ========== 构建阶段 ==========
-FROM rust:1.75.0-bookworm AS builder
+FROM rust:bookworm AS builder
 
 # 安装依赖
 RUN apt-get update && apt-get install -y \
@@ -15,6 +15,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src/common/Cargo.toml src/common/Cargo.toml
 COPY src/ops-service/Cargo.toml src/ops-service/Cargo.toml
 COPY src/ops-runner/Cargo.toml src/ops-runner/Cargo.toml
+
+# 创建占位源码以利用 Docker 缓存层
+RUN mkdir -p src/common/src && printf '// placeholder\n' > src/common/src/lib.rs
+RUN mkdir -p src/ops-service/src && printf 'fn main() {}\n' > src/ops-service/src/lib.rs
+RUN mkdir -p src/ops-runner/src && printf 'fn main() {}\n' > src/ops-runner/src/main.rs
 
 # 预拉取依赖（缓存层）
 RUN cargo fetch

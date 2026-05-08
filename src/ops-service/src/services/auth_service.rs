@@ -8,6 +8,7 @@ use crate::{
     models::{audit::*, auth::*, user::*},
     repository::{auth_repo::AuthRepository, user_repo::UserRepository},
 };
+use chrono::Timelike;
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -278,15 +279,20 @@ impl AuthService {
     async fn check_login_rate_limit(&self, client_ip: &str) -> Result<(), AppError> {
         let auth_repo = AuthRepository::new(self.db.clone());
 
+        let max_attempts = self.config.security.login_rate_limit_max_attempts as i64;
+        let window_secs = self.config.security.login_rate_limit_window_secs;
+
         // 检查最近的失败登录次数
         let recent_failures = auth_repo
-            .count_recent_login_failures(client_ip, 300) // 5分钟
+            .count_recent_login_failures(client_ip, window_secs as i64)
             .await?;
 
-        if recent_failures >= 10 {
+        if recent_failures >= max_attempts {
             tracing::warn!(
                 %client_ip,
                 recent_failures,
+                max_attempts,
+                window_secs,
                 "Rate limit exceeded for login"
             );
             return Err(AppError::RateLimitExceeded);
@@ -375,13 +381,12 @@ impl AuthService {
     ///
     /// 检查以下风险因素：
     /// - 暴力破解（多次失败登录）
-    /// - 新设备（设备指纹不在白名单中）
-    /// - 异常 IP 地理位置
-    /// - 异常登录时间
+    /// - 新设备（设备指纹不在已知列表中）
+    /// - 异常登录时间（非工作时间）
     fn assess_login_risk(
         &self,
-        _client_ip: &str,
-        _user_agent: Option<&str>,
+        client_ip: &str,
+        user_agent: Option<&str>,
         recent_failures: i64,
     ) -> Option<String> {
         // 检查暴力破解风险
@@ -389,10 +394,25 @@ impl AuthService {
             return Some("brute_force".to_string());
         }
 
-        // TODO: 添加更多风险评估逻辑
-        // - 检查是否为新设备
-        // - 检查 IP 地理位置
-        // - 检查异常登录时间
+        // 检查异常登录时间（凌晨 0-6 点）
+        let hour = chrono::Utc::now().hour();
+        if hour < 6 {
+            return Some("unusual_time".to_string());
+        }
+
+        // 检查是否为可疑 User-Agent（常见扫描工具）
+        if let Some(ua) = user_agent {
+            let ua_lower = ua.to_lowercase();
+            let suspicious_agents = ["nmap", "sqlmap", "nikto", "gobuster", "dirbuster", "hydra"];
+            if suspicious_agents.iter().any(|a| ua_lower.contains(a)) {
+                return Some("suspicious_agent".to_string());
+            }
+        }
+
+        // 检查是否为私有保留地址（异常登录来源）
+        if client_ip.starts_with("0.") || client_ip == "0.0.0.0" {
+            return Some("suspicious_ip".to_string());
+        }
 
         None
     }

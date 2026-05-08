@@ -4,7 +4,7 @@
 
 use ops_service::auth::jwt::JwtService;
 use ops_service::config::{
-    AppConfig, ConcurrencyConfig, DatabaseConfig, LoggingConfig, RabbitMqConfig,
+    AppConfig, ConcurrencyConfig, DatabaseConfig, LoggingConfig, MetricsConfig, RabbitMqConfig,
     RunnerDockerConfig, SecurityConfig, ServerConfig, SshConfig,
 };
 use secrecy::SecretString;
@@ -24,6 +24,7 @@ fn create_test_config() -> AppConfig {
             acquire_timeout_secs: 30,
             idle_timeout_secs: 600,
             max_lifetime_secs: 1800,
+            auto_create_if_missing: true,
         },
         logging: LoggingConfig {
             level: "info".to_string(),
@@ -43,6 +44,11 @@ fn create_test_config() -> AppConfig {
             max_login_attempts: 5,
             login_lockout_duration_secs: 1800,
             runner_api_key: None,
+            runner_webhook_hmac_secret: None,
+            runner_webhook_max_skew_secs: 300,
+            runner_webhook_nonce_ttl_secs: 600,
+            login_rate_limit_max_attempts: 10,
+            login_rate_limit_window_secs: 300,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -73,6 +79,7 @@ fn create_test_config() -> AppConfig {
             publish_timeout_secs: 10,
         },
         runner_docker: RunnerDockerConfig::default(),
+        metrics: MetricsConfig::default(),
     }
 }
 

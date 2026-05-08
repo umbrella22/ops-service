@@ -16,7 +16,31 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::AppState,
+    realtime::RealtimeEvent,
 };
+
+/// 合法状态迁移表
+/// 返回 true 表示允许从当前状态迁移到新状态
+fn is_valid_status_transition(current: Option<&str>, new: &str) -> bool {
+    match (current, new) {
+        // 新建作业可以从任何状态开始
+        (None, _) => true,
+        // pending -> running/completed/failed/cancelled
+        (Some("pending"), "running" | "completed" | "failed" | "cancelled") => true,
+        (Some("pending"), _) => false,
+        // running -> completed/failed/cancelled
+        (Some("running"), "completed" | "failed" | "cancelled") => true,
+        (Some("running"), _) => false,
+        // completed/failed/cancelled 是终态，不允许迁移
+        (Some("completed"), _) => false,
+        (Some("failed"), "running") => true, // 允许重试
+        (Some("failed"), _) => false,
+        (Some("cancelled"), "running") => true, // 允许重试
+        (Some("cancelled"), _) => false,
+        // 未知状态默认拒绝
+        _ => false,
+    }
+}
 
 /// 接收构建状态更新
 pub async fn build_status_webhook(
@@ -31,8 +55,8 @@ pub async fn build_status_webhook(
         "Received build status update"
     );
 
-    // 检查构建作业是否存在
-    let job_exists = sqlx::query("SELECT id FROM build_jobs WHERE id = $1")
+    // 检查构建作业是否存在，同时获取当前状态用于迁移校验
+    let job_row = sqlx::query("SELECT id, status::text FROM build_jobs WHERE id = $1")
         .bind(payload.job_id)
         .fetch_optional(&state.db)
         .await
@@ -41,12 +65,19 @@ pub async fn build_status_webhook(
             AppError::database("Failed to check build job")
         })?;
 
-    if job_exists.is_none() {
+    let (current_status_opt, job_exists) = match job_row {
+        Some(row) => (
+            row.try_get::<String, _>("status").ok(),
+            true,
+        ),
+        None => (None, false),
+    };
+
+    if !job_exists {
         warn!(
             job_id = %payload.job_id,
             "Build job not found for status update"
         );
-        // 不返回错误，因为可能已经被删除
         return Ok(StatusCode::ACCEPTED);
     }
 
@@ -60,6 +91,27 @@ pub async fn build_status_webhook(
         BuildStatus::Timeout => "failed",
         BuildStatus::Cancelled => "cancelled",
     };
+
+    // 状态迁移校验：拒绝非法迁移
+    if !is_valid_status_transition(current_status_opt.as_deref(), status_str) {
+        warn!(
+            job_id = %payload.job_id,
+            current_status = ?current_status_opt,
+            new_status = %status_str,
+            "Invalid status transition, ignoring"
+        );
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    // 幂等性保护：如果新旧状态相同且不是终态，跳过更新
+    if current_status_opt.as_deref() == Some(status_str) {
+        debug!(
+            job_id = %payload.job_id,
+            status = %status_str,
+            "Status unchanged, skipping update"
+        );
+        return Ok(StatusCode::ACCEPTED);
+    }
 
     // 根据状态更新时间戳
     let (started_at, completed_at) = match payload.status {
@@ -80,7 +132,7 @@ pub async fn build_status_webhook(
         _ => (None, None),
     };
 
-    let mut query = String::from("UPDATE build_jobs SET status = $1");
+    let mut query = String::from("UPDATE build_jobs SET status = CAST($1 AS job_status)");
     let mut param_idx = 2;
 
     if let Some(_start) = started_at {
@@ -111,11 +163,20 @@ pub async fn build_status_webhook(
 
     // 如果有步骤状态更新，处理步骤状态
     if let Some(ref step_update) = payload.step_status {
-        if let Err(e) = update_step_status(&state, &payload, step_update).await {
+        let uploaded_by = lookup_runner_id(&state, &payload.runner_name).await;
+        if let Err(e) =
+            update_step_status_with_uploader(&state, &payload, step_update, uploaded_by).await
+        {
             error!(error = ?e, "Failed to update step status");
-            // 继续处理，不阻塞
         }
     }
+
+    // 发布实时事件 (SSE)
+    let _ = state.event_bus.publish(RealtimeEvent::JobStatusChanged {
+        job_id: payload.job_id,
+        old_status: current_status_opt.unwrap_or_default(),
+        new_status: status_str.to_string(),
+    });
 
     debug!(
         job_id = %payload.job_id,
@@ -146,48 +207,66 @@ pub async fn build_log_webhook(
         return Ok(StatusCode::ACCEPTED);
     }
 
-    // 查找或创建步骤记录
-    let _step_id = format!("{}_{}", payload.job_id, payload.step_id);
+    // 查找或创建步骤记录，同时获取当前 offset 用于幂等/乱序保护
+    let step_row = sqlx::query(
+        "SELECT id, COALESCE(log_offset, 0) as log_offset FROM build_steps WHERE job_id = $1 AND step_id = $2",
+    )
+    .bind(payload.job_id)
+    .bind(&payload.step_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "Failed to check build step");
+        AppError::database("Failed to check build step")
+    })?;
 
-    // 检查步骤是否存在
-    let step_exists = sqlx::query("SELECT id FROM build_steps WHERE job_id = $1 AND step_id = $2")
+    if let Some(row) = step_row {
+        let current_offset: i64 = row.try_get("log_offset").unwrap_or(0);
+        let new_offset = payload.offset as i64;
+
+        // 幂等保护：如果 offset 不大于当前，跳过（重复消息）
+        if new_offset <= current_offset && !payload.content.is_empty() {
+            debug!(
+                job_id = %payload.job_id,
+                step_id = %payload.step_id,
+                current_offset,
+                new_offset,
+                "Duplicate or out-of-order log message, skipping"
+            );
+            return Ok(StatusCode::ACCEPTED);
+        }
+
+        // 更新步骤日志（追加）+ 更新 offset
+        sqlx::query(
+            "UPDATE build_steps SET output_detail = COALESCE(output_detail, '') || $1, log_offset = $2, updated_at = NOW() WHERE job_id = $3 AND step_id = $4",
+        )
+        .bind(&payload.content)
+        .bind(new_offset)
         .bind(payload.job_id)
         .bind(&payload.step_id)
-        .fetch_optional(&state.db)
+        .execute(&state.db)
         .await
         .map_err(|e| {
-            error!(error = %e, "Failed to check build step");
-            AppError::database("Failed to check build step")
+            error!(error = %e, "Failed to update build step log");
+            AppError::database("Failed to update build step")
         })?;
-
-    // 如果步骤不存在，创建一个
-    if step_exists.is_none() {
+    } else {
+        // 创建新步骤
         sqlx::query(
-            "INSERT INTO build_steps (job_id, step_id, step_name, status, output_detail, created_at, updated_at)
-             VALUES ($1, $2, $3, 'running', $4, NOW(), NOW())",
+            "INSERT INTO build_steps (job_id, step_id, step_name, status, output_detail, log_offset, created_at, updated_at)
+             VALUES ($1, $2, $3, 'running', $4, $5, NOW(), NOW())",
         )
         .bind(payload.job_id)
         .bind(&payload.step_id)
         .bind(&payload.step_id)
         .bind(&payload.content)
+        .bind(payload.offset as i64)
         .execute(&state.db)
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to create build step");
             AppError::database("Failed to create build step")
         })?;
-    } else {
-        // 更新步骤日志（追加）
-        sqlx::query("UPDATE build_steps SET output_detail = COALESCE(output_detail, '') || $1, updated_at = NOW() WHERE job_id = $2 AND step_id = $3")
-            .bind(&payload.content)
-            .bind(payload.job_id)
-            .bind(&payload.step_id)
-            .execute(&state.db)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to update build step log");
-                AppError::database("Failed to update build step")
-            })?;
     }
 
     debug!(
@@ -287,11 +366,31 @@ pub async fn build_artifact_webhook(
     Ok(StatusCode::CREATED)
 }
 
+/// 根据 runner 名称查找其 UUID
+async fn lookup_runner_id(state: &AppState, runner_name: &str) -> Option<Uuid> {
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM runners WHERE name = $1")
+        .bind(runner_name)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+}
+
 /// 更新步骤状态
 async fn update_step_status(
     state: &AppState,
     status_msg: &BuildStatusMessage,
     step_update: &StepStatusUpdate,
+) -> Result<()> {
+    update_step_status_with_uploader(state, status_msg, step_update, None).await
+}
+
+/// 更新步骤状态（带上传者信息）
+async fn update_step_status_with_uploader(
+    state: &AppState,
+    status_msg: &BuildStatusMessage,
+    step_update: &StepStatusUpdate,
+    uploaded_by: Option<Uuid>,
 ) -> Result<()> {
     // 转换状态
     let status_str = match step_update.status {
@@ -363,7 +462,7 @@ async fn update_step_status(
             "step_id": step_update.step_id,
             "produced_at": Utc::now(),
         }))
-        .bind(Uuid::new_v4()) // TODO: 从原始请求中获取真实的上传者
+        .bind(uploaded_by.unwrap_or_else(Uuid::new_v4))
         .execute(&state.db)
         .await?;
     }
@@ -417,11 +516,10 @@ impl BuildMessageConsumer {
 
         // 获取当前作业状态（用于判断是否需要递减 current_jobs）
         let current_status: Option<String> =
-            sqlx::query("SELECT status FROM build_jobs WHERE id = $1")
+            sqlx::query_scalar::<_, String>("SELECT status::text FROM build_jobs WHERE id = $1")
                 .bind(payload.job_id)
                 .fetch_optional(&self.state.db)
-                .await?
-                .and_then(|row| row.get("status"));
+                .await?;
 
         if current_status.is_none() {
             warn!(
@@ -460,7 +558,7 @@ impl BuildMessageConsumer {
             _ => (None, None),
         };
 
-        let mut query = String::from("UPDATE build_jobs SET status = $1");
+        let mut query = String::from("UPDATE build_jobs SET status = CAST($1 AS job_status)");
         let mut param_idx = 2;
 
         if started_at.is_some() {

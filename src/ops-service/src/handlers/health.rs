@@ -77,7 +77,7 @@ pub async fn health_check() -> Json<HealthResponse> {
 }
 
 /// 就绪探针
-/// 检查数据库等依赖
+/// 检查数据库和 RabbitMQ 等依赖
 pub async fn readiness_check(State(state): State<Arc<AppState>>) -> Json<ReadinessResponse> {
     let mut checks = Vec::new();
 
@@ -93,6 +93,17 @@ pub async fn readiness_check(State(state): State<Arc<AppState>>) -> Json<Readine
             db::HealthStatus::Healthy => None,
             db::HealthStatus::Unhealthy(msg) => Some(msg),
         },
+    });
+
+    // RabbitMQ 连通性检查
+    let rabbitmq_status = match state.rabbitmq_publisher.get().await {
+        Ok(_) => ("healthy".to_string(), None),
+        Err(e) => ("unhealthy".to_string(), Some(format!("RabbitMQ: {}", e))),
+    };
+    checks.push(HealthCheck {
+        name: "rabbitmq".to_string(),
+        status: rabbitmq_status.0,
+        message: rabbitmq_status.1,
     });
 
     let all_healthy = checks.iter().all(|c| c.status == "healthy");

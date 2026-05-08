@@ -450,7 +450,7 @@ impl DockerExecutor {
         Ok(output)
     }
 
-    /// 等待容器退出
+    /// 等待容器退出并返回退出码
     async fn wait_for_container(&self, container_name: &str) -> Result<i32> {
         let options = Some(WaitContainerOptions {
             condition: "not-running".to_string(),
@@ -458,10 +458,38 @@ impl DockerExecutor {
 
         let mut stream = self.docker.wait_container(container_name, options);
 
-        match stream.next().await {
-            Some(Ok(exit_code)) => Ok(exit_code.status_code as i32),
-            _ => Ok(-1),
+        // 多次尝试获取退出码（Docker API 偶有瞬时错误）
+        for attempt in 0..5 {
+            match stream.next().await {
+                Some(Ok(exit)) => return Ok(exit.status_code as i32),
+                Some(Err(e)) => {
+                    warn!(
+                        "Failed to get container exit code (attempt {}): {} — retrying",
+                        attempt + 1,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+                None => {
+                    warn!("Container wait stream ended without result");
+                    break;
+                }
+            }
         }
+
+        // 兜底：直接检查容器状态
+        match self.docker.inspect_container(container_name, None).await {
+            Ok(info) => {
+                if let Some(state) = info.state {
+                    if state.running == Some(false) && state.exit_code.is_some() {
+                        return Ok(state.exit_code.unwrap_or(-1) as i32);
+                    }
+                }
+            }
+            Err(e) => warn!("Failed to inspect container {}: {}", container_name, e),
+        }
+
+        Ok(-1)
     }
 
     /// 移除容器

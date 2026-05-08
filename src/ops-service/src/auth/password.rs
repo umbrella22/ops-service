@@ -151,6 +151,7 @@ mod tests {
                 acquire_timeout_secs: 30,
                 idle_timeout_secs: 600,
                 max_lifetime_secs: 1800,
+                auto_create_if_missing: true,
             },
             logging: crate::config::LoggingConfig {
                 level: "info".to_string(),
@@ -170,6 +171,11 @@ mod tests {
                 max_login_attempts: 5,
                 login_lockout_duration_secs: 1800,
                 runner_api_key: None,
+                runner_webhook_hmac_secret: None,
+                runner_webhook_max_skew_secs: 300,
+                runner_webhook_nonce_ttl_secs: 600,
+                login_rate_limit_max_attempts: 10,
+                login_rate_limit_window_secs: 300,
             },
             ssh: crate::config::SshConfig {
                 default_username: "root".to_string(),
@@ -200,6 +206,7 @@ mod tests {
                 publish_timeout_secs: 10,
             },
             runner_docker: crate::config::RunnerDockerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
 
         // Valid password
