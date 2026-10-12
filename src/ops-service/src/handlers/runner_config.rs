@@ -8,7 +8,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use sqlx::Row;
+use sqlx::{AssertSqlSafe, Row};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -232,7 +232,9 @@ pub async fn create_runner_config(
         )
         .await;
 
-    state.runner_config_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .runner_config_version
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     Ok((StatusCode::CREATED, Json::<RunnerDockerConfigResponse>(config.into())))
 }
@@ -324,7 +326,7 @@ pub async fn update_runner_config(
     let query_str =
         format!("UPDATE runner_docker_configs SET {} WHERE id = $1", updates.join(", "));
 
-    let mut query = sqlx::query(&query_str).bind(id);
+    let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(id);
 
     if let Some(enabled) = request.enabled {
         query = query.bind(enabled);
@@ -435,7 +437,9 @@ pub async fn update_runner_config(
         )
         .await;
 
-    state.runner_config_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .runner_config_version
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     Ok(Json::<RunnerDockerConfigResponse>(new_config.into()))
 }
@@ -595,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_default_enabled() {
-        assert_eq!(default_enabled(), true);
+        assert!(default_enabled());
     }
 
     #[test]

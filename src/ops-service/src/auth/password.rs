@@ -2,10 +2,8 @@
 
 use crate::{config::AppConfig, error::AppError};
 use argon2::{
-    password_hash::{
-        rand_core::OsRng, PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString,
-    },
     Algorithm, Argon2, Params, Version,
+    password_hash::{PasswordHasher as _, PasswordVerifier, generate_salt, phc::PasswordHash},
 };
 
 /// Password hasher with configurable parameters
@@ -27,11 +25,11 @@ impl PasswordHasher {
 
     /// Hash a password
     pub fn hash(&self, password: &str) -> Result<String, AppError> {
-        let salt = SaltString::generate(&mut OsRng);
+        let salt = generate_salt();
 
         let password_hash = self
             .argon2
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password_with_salt(password.as_bytes(), &salt)
             .map_err(|e| {
                 tracing::error!("Failed to hash password: {:?}", e);
                 AppError::Internal(format!("Failed to hash password: {}", e))
@@ -158,7 +156,9 @@ mod tests {
                 format: "json".to_string(),
             },
             security: crate::config::SecurityConfig {
-                jwt_secret: secrecy::SecretString::from("test_secret_key_32_characters_long!".to_string()),
+                jwt_secret: secrecy::SecretString::from(
+                    "test_secret_key_32_characters_long!".to_string(),
+                ),
                 access_token_exp_secs: 900,
                 refresh_token_exp_secs: 604800,
                 rate_limit_rps: 100,
@@ -176,6 +176,7 @@ mod tests {
                 runner_webhook_nonce_ttl_secs: 600,
                 login_rate_limit_max_attempts: 10,
                 login_rate_limit_window_secs: 300,
+                credential_encryption_key: None,
             },
             ssh: crate::config::SshConfig {
                 default_username: "root".to_string(),
@@ -207,6 +208,7 @@ mod tests {
             },
             runner_docker: crate::config::RunnerDockerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            notifications: crate::config::NotifyConfig::default(),
         };
 
         // Valid password

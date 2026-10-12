@@ -69,9 +69,9 @@ impl UserRepository {
             r#"
             UPDATE users
             SET
-                email = COALESCE($2, email),
-                full_name = COALESCE($3, full_name),
-                department = COALESCE($4, department),
+                email = COALESCE(NULLIF($2, ''), email),
+                full_name = COALESCE(NULLIF($3, ''), full_name),
+                department = COALESCE(NULLIF($4, ''), department),
                 status = COALESCE($5, status),
                 updated_at = NOW()
             WHERE id = $1
@@ -128,9 +128,11 @@ impl UserRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// 增加失败登录次数
-    pub async fn increment_failed_attempts(&self, id: Uuid) -> Result<(), AppError> {
-        sqlx::query(
+    /// 原子增加失败登录次数并返回 DB 中的新值。
+    /// 此前返回 ()，调用方只能用"读取的旧值 + 1"判断是否达阈值，
+    /// 并发登录下判定失真；RETURNING 保证锁定判定基于 DB 真实计数。
+    pub async fn increment_failed_attempts(&self, id: Uuid) -> Result<i32, AppError> {
+        let new_count: i32 = sqlx::query_scalar(
             r#"
             UPDATE users
             SET
@@ -138,13 +140,14 @@ impl UserRepository {
                 last_failed_login_at = NOW(),
                 updated_at = NOW()
             WHERE id = $1
+            RETURNING failed_login_attempts
             "#,
         )
         .bind(id)
-        .execute(&self.db)
+        .fetch_one(&self.db)
         .await?;
 
-        Ok(())
+        Ok(new_count)
     }
 
     /// 重置失败登录次数

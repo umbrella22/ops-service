@@ -29,6 +29,10 @@ pub enum AppError {
     #[error("Access denied")]
     Forbidden,
 
+    /// 403 但带可读原因（如"Runner 已被禁用"）
+    #[error("Access denied: {0}")]
+    ForbiddenDetail(String),
+
     #[error("Resource not found: {0}")]
     NotFound(String),
 
@@ -63,7 +67,7 @@ impl AppError {
         match self {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
-            AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::Forbidden | AppError::ForbiddenDetail(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
@@ -85,6 +89,7 @@ impl AppError {
             AppError::Authentication(msg) => msg.clone(),
             AppError::NotFound(msg) => format!("Resource not found: {}", msg),
             AppError::Forbidden => "Access denied".to_string(),
+            AppError::ForbiddenDetail(msg) => msg.clone(),
             AppError::BadRequest(msg) => msg.clone(),
             AppError::Validation(msg) => msg.clone(),
             AppError::RateLimitExceeded => "Rate limit exceeded".to_string(),
@@ -94,7 +99,9 @@ impl AppError {
             AppError::SshExecutionError(_) => "SSH command execution failed".to_string(),
             AppError::Database(_) => "Database error occurred".to_string(),
             AppError::Config(_) => "Configuration error".to_string(),
-            AppError::Internal(msg) => format!("Internal server error: {}", msg),
+            // 原始 msg 只进日志（见 into_response），避免把内部细节
+            // （SQL、路径、上游错误串）泄漏给客户端
+            AppError::Internal(_) => "Internal server error".to_string(),
         }
     }
 
@@ -122,6 +129,10 @@ impl AppError {
 
     pub fn internal_error(msg: &str) -> Self {
         AppError::Internal(msg.to_string())
+    }
+
+    pub fn forbidden_custom(msg: &str) -> Self {
+        AppError::ForbiddenDetail(msg.to_string())
     }
 
     pub fn timeout(msg: &str) -> Self {
@@ -161,7 +172,10 @@ pub struct ErrorDetail {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        let request_id = uuid::Uuid::new_v4().to_string();
+        // 与请求链路共享 request_id（由请求追踪中间件注入任务本地上下文），
+        // 此前每次错误都生成全新 UUID，客户端拿到的 id 无法与日志关联
+        let request_id = crate::middleware::current_request_id()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let error_response = ErrorResponse {
             error: ErrorDetail {
@@ -197,6 +211,27 @@ impl From<config::ConfigError> for AppError {
     }
 }
 
+/// 从 ConcurrencyError 转换
+impl From<crate::concurrency::ConcurrencyError> for AppError {
+    fn from(e: crate::concurrency::ConcurrencyError) -> Self {
+        match e {
+            crate::concurrency::ConcurrencyError::Rejected { .. }
+            | crate::concurrency::ConcurrencyError::LimitExceeded { .. } => {
+                AppError::RateLimitExceeded
+            }
+            crate::concurrency::ConcurrencyError::QueueFull { .. } => {
+                AppError::Internal("Concurrency queue is full".to_string())
+            }
+            crate::concurrency::ConcurrencyError::AcquireTimeout { .. } => {
+                AppError::Timeout("Acquiring concurrency permit timed out".to_string())
+            }
+            crate::concurrency::ConcurrencyError::Closed => {
+                AppError::Internal("Concurrency controller closed".to_string())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,26 +251,5 @@ mod tests {
         let message = error.user_message();
         assert_eq!(message, "Database error occurred");
         assert!(!message.contains("sqlx"));
-    }
-}
-
-/// 从 ConcurrencyError 转换
-impl From<crate::concurrency::ConcurrencyError> for AppError {
-    fn from(e: crate::concurrency::ConcurrencyError) -> Self {
-        match e {
-            crate::concurrency::ConcurrencyError::Rejected { .. }
-            | crate::concurrency::ConcurrencyError::LimitExceeded { .. } => {
-                AppError::RateLimitExceeded
-            }
-            crate::concurrency::ConcurrencyError::QueueFull { .. } => {
-                AppError::Internal("Concurrency queue is full".to_string())
-            }
-            crate::concurrency::ConcurrencyError::AcquireTimeout { .. } => {
-                AppError::Timeout("Acquiring concurrency permit timed out".to_string())
-            }
-            crate::concurrency::ConcurrencyError::Closed => {
-                AppError::Internal("Concurrency controller closed".to_string())
-            }
-        }
     }
 }

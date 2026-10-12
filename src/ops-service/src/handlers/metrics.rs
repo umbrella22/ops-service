@@ -2,10 +2,10 @@
 //! 提供 /metrics 端点
 
 use axum::{
-    extract::State,
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -69,7 +69,8 @@ async fn collect_metrics_snapshot(state: &Arc<AppState>) -> MetricsResponse {
         "SELECT COUNT(*) FROM jobs WHERE status IN ('failed', 'partially_succeeded', 'cancelled')",
     )
     .await;
-    let jobs_completed_total = count_by_sql(state, "SELECT COUNT(*) FROM jobs WHERE status = 'completed'").await;
+    let jobs_completed_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM jobs WHERE status = 'completed'").await;
     let jobs_recent_created_total = count_by_sql(
         state,
         "SELECT COUNT(*) FROM jobs WHERE created_at >= NOW() - INTERVAL '15 minutes'",
@@ -81,26 +82,14 @@ async fn collect_metrics_snapshot(state: &Arc<AppState>) -> MetricsResponse {
     )
     .await;
 
-    let builds_pending_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM build_jobs WHERE status = 'pending'",
-    )
-    .await;
-    let builds_running_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM build_jobs WHERE status = 'running'",
-    )
-    .await;
-    let builds_failed_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM build_jobs WHERE status = 'failed'",
-    )
-    .await;
-    let builds_completed_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM build_jobs WHERE status = 'completed'",
-    )
-    .await;
+    let builds_pending_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM build_jobs WHERE status = 'pending'").await;
+    let builds_running_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM build_jobs WHERE status = 'running'").await;
+    let builds_failed_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM build_jobs WHERE status = 'failed'").await;
+    let builds_completed_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM build_jobs WHERE status = 'completed'").await;
     let builds_recent_created_total = count_by_sql(
         state,
         "SELECT COUNT(*) FROM build_jobs WHERE created_at >= NOW() - INTERVAL '15 minutes'",
@@ -112,11 +101,9 @@ async fn collect_metrics_snapshot(state: &Arc<AppState>) -> MetricsResponse {
     )
     .await;
 
-    let approvals_pending_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'",
-    )
-    .await;
+    let approvals_pending_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'")
+            .await;
     let approvals_recent_created_total = count_by_sql(
         state,
         "SELECT COUNT(*) FROM approval_requests WHERE requested_at >= NOW() - INTERVAL '15 minutes'",
@@ -127,26 +114,20 @@ async fn collect_metrics_snapshot(state: &Arc<AppState>) -> MetricsResponse {
         "SELECT COUNT(*) FROM approval_requests WHERE status = 'approved' AND updated_at >= NOW() - INTERVAL '15 minutes'",
     )
     .await;
-    let approvals_approved_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM approval_requests WHERE status = 'approved'",
-    )
-    .await;
-    let approvals_rejected_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM approval_requests WHERE status = 'rejected'",
-    )
-    .await;
+    let approvals_approved_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM approval_requests WHERE status = 'approved'")
+            .await;
+    let approvals_rejected_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM approval_requests WHERE status = 'rejected'")
+            .await;
     let approvals_recent_rejected_total = count_by_sql(
         state,
         "SELECT COUNT(*) FROM approval_requests WHERE status = 'rejected' AND updated_at >= NOW() - INTERVAL '15 minutes'",
     )
     .await;
-    let approvals_timeout_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM approval_requests WHERE status = 'timeout'",
-    )
-    .await;
+    let approvals_timeout_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM approval_requests WHERE status = 'timeout'")
+            .await;
 
     let runners_total = count_by_sql(state, "SELECT COUNT(*) FROM runners").await;
     let runners_recent_registrations_total = count_by_sql(
@@ -160,17 +141,15 @@ async fn collect_metrics_snapshot(state: &Arc<AppState>) -> MetricsResponse {
     )
     .await;
     let runners_unhealthy_total = runners_total.saturating_sub(runners_healthy_total);
-    let runners_maintenance_total = count_by_sql(
-        state,
-        "SELECT COUNT(*) FROM runners WHERE status = 'maintenance'",
-    )
-    .await;
+    let runners_maintenance_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM runners WHERE status = 'maintenance'").await;
     let runner_heartbeat_max_age_secs = max_runner_heartbeat_age_secs(state).await;
 
     let artifacts_total = count_by_sql(state, "SELECT COUNT(*) FROM build_artifacts").await;
     let artifacts_public_total =
         count_by_sql(state, "SELECT COUNT(*) FROM build_artifacts WHERE is_public = true").await;
-    let artifact_download_total = count_by_sql(state, "SELECT COUNT(*) FROM artifact_downloads").await;
+    let artifact_download_total =
+        count_by_sql(state, "SELECT COUNT(*) FROM artifact_downloads").await;
     let artifact_downloads_recent_total = count_by_sql(
         state,
         "SELECT COUNT(*) FROM artifact_downloads WHERE downloaded_at >= NOW() - INTERVAL '15 minutes'",
@@ -249,29 +228,39 @@ pub async fn metrics_export(State(state): State<Arc<AppState>>) -> Response {
     metrics::gauge!("ops_builds_running_total").set(snapshot.builds_running_total as f64);
     metrics::gauge!("ops_builds_failed_total").set(snapshot.builds_failed_total as f64);
     metrics::gauge!("ops_builds_completed_total").set(snapshot.builds_completed_total as f64);
-    metrics::gauge!("ops_builds_recent_created_total").set(snapshot.builds_recent_created_total as f64);
-    metrics::gauge!("ops_builds_recent_failed_total").set(snapshot.builds_recent_failed_total as f64);
+    metrics::gauge!("ops_builds_recent_created_total")
+        .set(snapshot.builds_recent_created_total as f64);
+    metrics::gauge!("ops_builds_recent_failed_total")
+        .set(snapshot.builds_recent_failed_total as f64);
     metrics::gauge!("ops_approvals_pending_total").set(snapshot.approvals_pending_total as f64);
-    metrics::gauge!("ops_approvals_recent_created_total").set(snapshot.approvals_recent_created_total as f64);
-    metrics::gauge!("ops_approvals_recent_approved_total").set(snapshot.approvals_recent_approved_total as f64);
+    metrics::gauge!("ops_approvals_recent_created_total")
+        .set(snapshot.approvals_recent_created_total as f64);
+    metrics::gauge!("ops_approvals_recent_approved_total")
+        .set(snapshot.approvals_recent_approved_total as f64);
     metrics::gauge!("ops_approvals_approved_total").set(snapshot.approvals_approved_total as f64);
     metrics::gauge!("ops_approvals_rejected_total").set(snapshot.approvals_rejected_total as f64);
-    metrics::gauge!("ops_approvals_recent_rejected_total").set(snapshot.approvals_recent_rejected_total as f64);
+    metrics::gauge!("ops_approvals_recent_rejected_total")
+        .set(snapshot.approvals_recent_rejected_total as f64);
     metrics::gauge!("ops_approvals_timeout_total").set(snapshot.approvals_timeout_total as f64);
     metrics::gauge!("ops_runners_total").set(snapshot.runners_total as f64);
-    metrics::gauge!("ops_runners_recent_registrations_total").set(snapshot.runners_recent_registrations_total as f64);
+    metrics::gauge!("ops_runners_recent_registrations_total")
+        .set(snapshot.runners_recent_registrations_total as f64);
     metrics::gauge!("ops_runners_healthy_total").set(snapshot.runners_healthy_total as f64);
     metrics::gauge!("ops_runners_unhealthy_total").set(snapshot.runners_unhealthy_total as f64);
     metrics::gauge!("ops_runners_maintenance_total").set(snapshot.runners_maintenance_total as f64);
-    metrics::gauge!("ops_runner_heartbeat_max_age_secs").set(snapshot.runner_heartbeat_max_age_secs as f64);
+    metrics::gauge!("ops_runner_heartbeat_max_age_secs")
+        .set(snapshot.runner_heartbeat_max_age_secs as f64);
     metrics::gauge!("ops_artifacts_total").set(snapshot.artifacts_total as f64);
     metrics::gauge!("ops_artifacts_public_total").set(snapshot.artifacts_public_total as f64);
     metrics::gauge!("ops_artifact_download_total").set(snapshot.artifact_download_total as f64);
-    metrics::gauge!("ops_artifact_downloads_recent_total").set(snapshot.artifact_downloads_recent_total as f64);
+    metrics::gauge!("ops_artifact_downloads_recent_total")
+        .set(snapshot.artifact_downloads_recent_total as f64);
     metrics::gauge!("ops_audit_logs_total").set(snapshot.audit_logs_total as f64);
-    metrics::gauge!("ops_audit_queries_recent_total").set(snapshot.audit_queries_recent_total as f64);
+    metrics::gauge!("ops_audit_queries_recent_total")
+        .set(snapshot.audit_queries_recent_total as f64);
     metrics::gauge!("ops_login_events_total").set(snapshot.login_events_total as f64);
-    metrics::gauge!("ops_login_failures_recent_total").set(snapshot.login_failures_recent_total as f64);
+    metrics::gauge!("ops_login_failures_recent_total")
+        .set(snapshot.login_failures_recent_total as f64);
 
     let body = crate::telemetry::prometheus_handle()
         .map(|handle| handle.render())
@@ -291,7 +280,7 @@ pub async fn metrics_json(State(state): State<Arc<AppState>>) -> Json<MetricsRes
     Json(collect_metrics_snapshot(&state).await)
 }
 
-async fn count_by_sql(state: &Arc<AppState>, sql: &str) -> i64 {
+async fn count_by_sql(state: &Arc<AppState>, sql: &'static str) -> i64 {
     sqlx::query_scalar::<_, i64>(sql)
         .fetch_one(&state.db)
         .await

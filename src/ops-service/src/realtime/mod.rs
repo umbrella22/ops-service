@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
@@ -30,6 +30,20 @@ pub enum RealtimeEvent {
         job_id: Uuid,
         output: String,
         is_complete: bool,
+    },
+    /// 构建日志追加（实时 tail）
+    BuildLogAppended {
+        job_id: Uuid,
+        step_id: String,
+        content: String,
+        level: String,
+    },
+    /// 构建步骤状态变更
+    BuildStepStatusChanged {
+        job_id: Uuid,
+        step_id: String,
+        status: String,
+        exit_code: Option<i32>,
     },
     /// 审批状态变更
     ApprovalStatusChanged {
@@ -95,6 +109,36 @@ impl RealtimeEvent {
                 }
             })
             .to_string(),
+            RealtimeEvent::BuildLogAppended {
+                job_id,
+                step_id,
+                content,
+                level,
+            } => serde_json::json!({
+                "type": "build_log_appended",
+                "data": {
+                    "job_id": job_id,
+                    "step_id": step_id,
+                    "content": content,
+                    "level": level,
+                }
+            })
+            .to_string(),
+            RealtimeEvent::BuildStepStatusChanged {
+                job_id,
+                step_id,
+                status,
+                exit_code,
+            } => serde_json::json!({
+                "type": "build_step_status_changed",
+                "data": {
+                    "job_id": job_id,
+                    "step_id": step_id,
+                    "status": status,
+                    "exit_code": exit_code,
+                }
+            })
+            .to_string(),
             RealtimeEvent::ApprovalStatusChanged {
                 approval_id,
                 old_status,
@@ -139,6 +183,8 @@ impl RealtimeEvent {
             RealtimeEvent::JobStatusChanged { .. } => "job_status_changed",
             RealtimeEvent::TaskStatusChanged { .. } => "task_status_changed",
             RealtimeEvent::TaskOutputUpdate { .. } => "task_output_update",
+            RealtimeEvent::BuildLogAppended { .. } => "build_log_appended",
+            RealtimeEvent::BuildStepStatusChanged { .. } => "build_step_status_changed",
             RealtimeEvent::ApprovalStatusChanged { .. } => "approval_status_changed",
             RealtimeEvent::NewApprovalRequest { .. } => "new_approval_request",
             RealtimeEvent::Heartbeat => "heartbeat",
@@ -223,6 +269,8 @@ impl JobEventStream {
                     RealtimeEvent::JobStatusChanged { job_id, .. } => job_id == &self.job_id,
                     RealtimeEvent::TaskStatusChanged { job_id, .. } => job_id == &self.job_id,
                     RealtimeEvent::TaskOutputUpdate { job_id, .. } => job_id == &self.job_id,
+                    RealtimeEvent::BuildLogAppended { job_id, .. } => job_id == &self.job_id,
+                    RealtimeEvent::BuildStepStatusChanged { job_id, .. } => job_id == &self.job_id,
                     RealtimeEvent::Heartbeat => true,
                     _ => false,
                 };

@@ -19,6 +19,10 @@ pub struct RunnerConfig {
 
     /// 执行配置
     pub execution: ExecutionConfig,
+
+    /// 产物存储配置
+    #[serde(default)]
+    pub artifact_storage: ArtifactStorageConfig,
 }
 
 /// Runner 基本信息
@@ -94,6 +98,14 @@ pub struct MessageQueueConfig {
     /// 预取消息数量
     #[serde(default = "default_prefetch")]
     pub prefetch: u16,
+
+    /// 控制面下发的完整队列名（如 runner.<name>.queue），提供时优先使用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_name_override: Option<String>,
+
+    /// 控制面下发的 routing key 模式（如 build.{name}，{..} 为占位符），提供时优先使用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_key_pattern: Option<String>,
 }
 
 fn default_vhost() -> String {
@@ -140,8 +152,73 @@ pub struct ExecutionConfig {
     pub docker: Option<DockerConfig>,
 }
 
-/// Docker 容器执行配置
+/// 产物存储配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactStorageConfig {
+    /// 存储类型 (s3, minio, http, local)
+    #[serde(default = "default_storage_type")]
+    pub storage_type: String,
+
+    /// 存储端点（S3 兼容服务地址或本地存储目录）
+    #[serde(default)]
+    pub endpoint: Option<String>,
+
+    /// 存储桶
+    #[serde(default)]
+    pub bucket: Option<String>,
+
+    /// 访问密钥
+    #[serde(default)]
+    pub access_key: Option<String>,
+
+    /// 私有密钥
+    #[serde(default)]
+    pub secret_key: Option<String>,
+
+    /// S3 区域
+    #[serde(default = "default_storage_region")]
+    pub region: String,
+}
+
+impl Default for ArtifactStorageConfig {
+    fn default() -> Self {
+        Self {
+            storage_type: default_storage_type(),
+            endpoint: None,
+            bucket: None,
+            access_key: None,
+            secret_key: None,
+            region: default_storage_region(),
+        }
+    }
+}
+
+impl ArtifactStorageConfig {
+    /// 从环境变量加载（与历史行为保持一致）
+    pub fn from_env() -> Self {
+        Self {
+            storage_type: std::env::var("ARTIFACT_STORAGE_TYPE")
+                .unwrap_or_else(|_| default_storage_type()),
+            endpoint: std::env::var("ARTIFACT_STORAGE_ENDPOINT").ok(),
+            bucket: std::env::var("ARTIFACT_STORAGE_BUCKET").ok(),
+            access_key: std::env::var("ARTIFACT_STORAGE_ACCESS_KEY").ok(),
+            secret_key: std::env::var("ARTIFACT_STORAGE_SECRET_KEY").ok(),
+            region: std::env::var("ARTIFACT_STORAGE_REGION")
+                .unwrap_or_else(|_| default_storage_region()),
+        }
+    }
+}
+
+fn default_storage_type() -> String {
+    "local".to_string()
+}
+
+fn default_storage_region() -> String {
+    "us-east-1".to_string()
+}
+
+/// Docker 容器执行配置
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockerConfig {
     /// 是否启用 Docker 执行
     #[serde(default)]
@@ -187,7 +264,7 @@ impl Default for DockerConfig {
 }
 
 /// Docker 资源限制
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockerResourceLimits {
     /// 内存限制（GB）
     #[serde(default)]
@@ -238,7 +315,7 @@ impl Default for DockerResourceLimits {
 }
 
 /// Docker 安全配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockerSecurityConfig {
     /// 是否使用非 root 用户运行
     #[serde(default)]
@@ -358,6 +435,8 @@ impl RunnerConfig {
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(1),
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: ExecutionConfig {
                 workspace_base_dir: std::env::var("RUNNER_WORKSPACE_DIR")
@@ -378,6 +457,7 @@ impl RunnerConfig {
                 cache_dir: std::env::var("RUNNER_CACHE_DIR").ok(),
                 docker: None,
             },
+            artifact_storage: ArtifactStorageConfig::from_env(),
         })
     }
 
@@ -408,13 +488,7 @@ impl RunnerConfig {
         });
     }
 
-    /// 获取心跳间隔
-    pub fn heartbeat_interval(&self) -> Duration {
-        Duration::from_secs(self.control_plane.heartbeat_interval_secs)
-    }
-
     /// 获取任务超时
-    #[allow(dead_code)]
     pub fn task_timeout(&self) -> Duration {
         Duration::from_secs(self.execution.task_timeout_secs)
     }
@@ -425,7 +499,15 @@ impl RunnerConfig {
     }
 
     /// 生成队列名称
+    ///
+    /// 控制面在注册响应中下发的完整队列名（queue_name_override）优先，
+    /// 未提供时回退到本地推导：{queue_prefix}.{runner_name}.queue
     pub fn queue_name(&self) -> String {
+        if let Some(name) = self.message_queue.queue_name_override.as_deref()
+            && !name.is_empty()
+        {
+            return name.to_string();
+        }
         format!(
             "{}.{}.queue",
             self.message_queue.queue_prefix,
@@ -433,7 +515,14 @@ impl RunnerConfig {
         )
     }
 
-    /// 生成广播模式 routing key（向后兼容）
+    /// 生成广播模式 routing key
+    ///
+    /// 契约 = 本地推导 `build.{capability}`（定向派发另有
+    /// `build.{capability}.{runner_name}`，见 routing_key_for_runner）。
+    /// 控制面下发的 routing_key_pattern（如 `build.{type}[.{runner_name}]`）
+    /// 是含模板语法的文档字符串，不是可执行的绑定键：历史版本曾把
+    /// 半替换结果（`build.general[.{runner_name}]`）当字面量绑定，
+    /// 产生永不匹配的死绑定，因此仅在注册日志中展示，不参与绑定。
     pub fn routing_key(&self, capability: &str) -> String {
         format!("build.{}", capability)
     }
@@ -444,15 +533,26 @@ impl RunnerConfig {
     }
 }
 
+/// 测试专用：跨模块共享的 env 修改互斥锁（mod tests 私有，需模块级再导出）
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    // edition 2024 中 std::env::set_var/remove_var 为 unsafe；
+    // 所有 env 访问均由 test_env_lock 串行化，满足单线程前提。
+    // 其他模块的测试（如 executor 的 env 白名单测试）也必须拿同一把锁，
+    // 否则并行测试互踩环境变量（曾导致 PoisonError 级联失败）。
     fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+        crate::config::test_env_lock()
     }
+
 
     fn create_test_config() -> RunnerConfig {
         RunnerConfig {
@@ -475,6 +575,8 @@ mod tests {
                 exchange: "ops.build".to_string(),
                 queue_prefix: "test-runner".to_string(),
                 prefetch: 2,
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: ExecutionConfig {
                 workspace_base_dir: "/tmp/test-workspace".to_string(),
@@ -484,6 +586,7 @@ mod tests {
                 cache_dir: Some("/tmp/cache".to_string()),
                 docker: None,
             },
+            artifact_storage: ArtifactStorageConfig::default(),
         }
     }
 
@@ -506,12 +609,6 @@ mod tests {
         assert_eq!(config.routing_key("node"), "build.node");
         assert_eq!(config.routing_key("rust"), "build.rust");
         assert_eq!(config.routing_key("java"), "build.java");
-    }
-
-    #[test]
-    fn test_heartbeat_interval() {
-        let config = create_test_config();
-        assert_eq!(config.heartbeat_interval(), Duration::from_secs(60));
     }
 
     #[test]
@@ -595,10 +692,10 @@ mod tests {
     fn test_from_env_missing_required() {
         let _guard = env_lock().lock().unwrap();
         // 清除环境变量
-        std::env::remove_var("RUNNER_NAME");
-        std::env::remove_var("CONTROL_PLANE_API_URL");
-        std::env::remove_var("RUNNER_API_KEY");
-        std::env::remove_var("RABBITMQ_AMQP_URL");
+        unsafe { std::env::remove_var("RUNNER_NAME") };
+        unsafe { std::env::remove_var("CONTROL_PLANE_API_URL") };
+        unsafe { std::env::remove_var("RUNNER_API_KEY") };
+        unsafe { std::env::remove_var("RABBITMQ_AMQP_URL") };
 
         let result = RunnerConfig::from_env();
         assert!(result.is_err());
@@ -608,10 +705,10 @@ mod tests {
     #[test]
     fn test_from_env_with_valid_vars() {
         let _guard = env_lock().lock().unwrap();
-        std::env::set_var("RUNNER_NAME", "env-test-runner");
-        std::env::set_var("CONTROL_PLANE_API_URL", "http://localhost:3000");
-        std::env::set_var("RUNNER_API_KEY", "env-test-key");
-        std::env::set_var("RABBITMQ_AMQP_URL", "amqp://localhost:5672");
+        unsafe { std::env::set_var("RUNNER_NAME", "env-test-runner") };
+        unsafe { std::env::set_var("CONTROL_PLANE_API_URL", "http://localhost:3000") };
+        unsafe { std::env::set_var("RUNNER_API_KEY", "env-test-key") };
+        unsafe { std::env::set_var("RABBITMQ_AMQP_URL", "amqp://localhost:5672") };
 
         let config = RunnerConfig::from_env().unwrap();
         assert_eq!(config.runner.name, "env-test-runner");
@@ -620,25 +717,25 @@ mod tests {
         assert_eq!(config.message_queue.amqp_url, "amqp://localhost:5672");
 
         // 清理
-        std::env::remove_var("RUNNER_NAME");
-        std::env::remove_var("CONTROL_PLANE_API_URL");
-        std::env::remove_var("RUNNER_API_KEY");
-        std::env::remove_var("RABBITMQ_AMQP_URL");
+        unsafe { std::env::remove_var("RUNNER_NAME") };
+        unsafe { std::env::remove_var("CONTROL_PLANE_API_URL") };
+        unsafe { std::env::remove_var("RUNNER_API_KEY") };
+        unsafe { std::env::remove_var("RABBITMQ_AMQP_URL") };
     }
 
     #[test]
     fn test_from_env_with_optional_vars() {
         let _guard = env_lock().lock().unwrap();
-        std::env::set_var("RUNNER_NAME", "test");
-        std::env::set_var("CONTROL_PLANE_API_URL", "http://localhost:3000");
-        std::env::set_var("RUNNER_API_KEY", "key");
-        std::env::set_var("RABBITMQ_AMQP_URL", "amqp://localhost:5672");
+        unsafe { std::env::set_var("RUNNER_NAME", "test") };
+        unsafe { std::env::set_var("CONTROL_PLANE_API_URL", "http://localhost:3000") };
+        unsafe { std::env::set_var("RUNNER_API_KEY", "key") };
+        unsafe { std::env::set_var("RABBITMQ_AMQP_URL", "amqp://localhost:5672") };
 
         // 设置可选变量
-        std::env::set_var("RUNNER_CAPABILITIES", "go,python");
-        std::env::set_var("RUNNER_MAX_CONCURRENT_JOBS", "8");
-        std::env::set_var("RUNNER_HEARTBEAT_INTERVAL_SECS", "120");
-        std::env::set_var("RUNNER_WORKSPACE_DIR", "/custom/workspace");
+        unsafe { std::env::set_var("RUNNER_CAPABILITIES", "go,python") };
+        unsafe { std::env::set_var("RUNNER_MAX_CONCURRENT_JOBS", "8") };
+        unsafe { std::env::set_var("RUNNER_HEARTBEAT_INTERVAL_SECS", "120") };
+        unsafe { std::env::set_var("RUNNER_WORKSPACE_DIR", "/custom/workspace") };
 
         let config = RunnerConfig::from_env().unwrap();
         assert_eq!(config.runner.capabilities, vec!["go".to_string(), "python".to_string()]);
@@ -647,13 +744,71 @@ mod tests {
         assert_eq!(config.execution.workspace_base_dir, "/custom/workspace");
 
         // 清理
-        std::env::remove_var("RUNNER_NAME");
-        std::env::remove_var("CONTROL_PLANE_API_URL");
-        std::env::remove_var("RUNNER_API_KEY");
-        std::env::remove_var("RABBITMQ_AMQP_URL");
-        std::env::remove_var("RUNNER_CAPABILITIES");
-        std::env::remove_var("RUNNER_MAX_CONCURRENT_JOBS");
-        std::env::remove_var("RUNNER_HEARTBEAT_INTERVAL_SECS");
-        std::env::remove_var("RUNNER_WORKSPACE_DIR");
+        unsafe { std::env::remove_var("RUNNER_NAME") };
+        unsafe { std::env::remove_var("CONTROL_PLANE_API_URL") };
+        unsafe { std::env::remove_var("RUNNER_API_KEY") };
+        unsafe { std::env::remove_var("RABBITMQ_AMQP_URL") };
+        unsafe { std::env::remove_var("RUNNER_CAPABILITIES") };
+        unsafe { std::env::remove_var("RUNNER_MAX_CONCURRENT_JOBS") };
+        unsafe { std::env::remove_var("RUNNER_HEARTBEAT_INTERVAL_SECS") };
+        unsafe { std::env::remove_var("RUNNER_WORKSPACE_DIR") };
+    }
+
+    #[test]
+    fn test_queue_name_override_from_control_plane() {
+        let mut config = create_test_config();
+        config.message_queue.queue_name_override = Some("runner.my-runner.queue".to_string());
+        // 控制面下发的完整队列名优先
+        assert_eq!(config.queue_name(), "runner.my-runner.queue");
+
+        config.message_queue.queue_name_override = Some(String::new());
+        // 空值视为未提供，回退到本地推导
+        assert_eq!(config.queue_name(), "test-runner.test_runner.queue");
+    }
+
+    #[test]
+    fn test_routing_key_pattern_from_control_plane() {
+        let mut config = create_test_config();
+        // 控制面下发的 pattern 是文档字符串，不影响实际绑定键（见 routing_key 文档）
+        config.message_queue.routing_key_pattern = Some("build.{type}[.{runner_name}]".to_string());
+        assert_eq!(config.routing_key("node"), "build.node");
+        assert_eq!(config.routing_key("general"), "build.general");
+
+        // 未下发时同样本地推导
+        config.message_queue.routing_key_pattern = None;
+        assert_eq!(config.routing_key("node"), "build.node");
+    }
+
+    #[test]
+    fn test_artifact_storage_config_defaults() {
+        let config = ArtifactStorageConfig::default();
+        assert_eq!(config.storage_type, "local");
+        assert_eq!(config.region, "us-east-1");
+        assert!(config.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_config_deserialization_defaults_for_new_fields() {
+        // 旧配置文件缺少新字段时应能正常反序列化
+        let json = r#"{
+            "runner": {
+                "name": "test-runner",
+                "environment": "test"
+            },
+            "control_plane": {
+                "api_url": "http://localhost:3000",
+                "api_key": "test-key"
+            },
+            "message_queue": {
+                "amqp_url": "amqp://localhost:5672"
+            },
+            "execution": {}
+        }"#;
+
+        let config: RunnerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.message_queue.queue_name_override, None);
+        assert_eq!(config.message_queue.routing_key_pattern, None);
+        assert_eq!(config.artifact_storage.storage_type, "local");
+        assert_eq!(config.artifact_storage.region, "us-east-1");
     }
 }

@@ -4,8 +4,8 @@
 
 use anyhow::{Context, Result};
 use futures::pin_mut;
-use lapin::{options::*, BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind};
 use lapin::types::ShortString;
+use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind, options::*};
 use secrecy::ExposeSecret;
 use serde::Serialize;
 use std::sync::Arc;
@@ -150,6 +150,36 @@ impl RabbitMqPublisher {
         Ok(())
     }
 
+    /// 发布构建取消消息（广播）
+    ///
+    /// 路由键 `build.cancel.<job_id>`；所有 runner 的任务队列绑定
+    /// `build.cancel.#`，由各 runner 按 job_id 匹配本地活跃任务。
+    pub async fn publish_build_cancel(&self, job_id: uuid::Uuid, payload: &[u8]) -> Result<()> {
+        let routing_key = format!("build.cancel.{}", job_id);
+
+        let confirm = self
+            .channel
+            .basic_publish(
+                short_string(self.config.build_exchange.clone()),
+                short_string(routing_key.clone()),
+                BasicPublishOptions::default(),
+                payload,
+                BasicProperties::default()
+                    .with_delivery_mode(2) // 持久化：broker 重启后未消费的取消不丢失
+                    .with_content_type("application/json".into()),
+            )
+            .await?
+            .await?;
+
+        if confirm.is_ack() {
+            debug!("Build cancel published: {}", routing_key);
+        } else {
+            warn!("Build cancel published but not acknowledged: {}", routing_key);
+        }
+
+        Ok(())
+    }
+
     /// 发布到 Runner 交换机（用于注册/心跳响应等）
     pub async fn publish_to_runner(
         &self,
@@ -176,7 +206,7 @@ impl RabbitMqPublisher {
 
     /// 健康检查
     pub async fn health_check(&self) -> bool {
-        if let Err(e) = self
+        match self
             .channel
             .exchange_declare(
                 short_string(self.config.build_exchange.clone()),
@@ -189,10 +219,11 @@ impl RabbitMqPublisher {
             )
             .await
         {
-            warn!("RabbitMQ health check failed: {}", e);
-            false
-        } else {
-            true
+            Err(e) => {
+                warn!("RabbitMQ health check failed: {}", e);
+                false
+            }
+            _ => true,
         }
     }
 }
@@ -302,6 +333,28 @@ impl RabbitMqConsumer {
             .await
             .context("Failed to declare build exchange")?;
 
+        // 声明死信交换机（毒消息的最终归宿）
+        let dlq_exchange = format!("{}.dlq", self.config.build_exchange);
+        self.channel
+            .exchange_declare(
+                short_string(dlq_exchange.clone()),
+                ExchangeKind::Topic,
+                ExchangeDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .context("Failed to declare DLQ exchange")?;
+
+        // 主队列统一挂上死信路由：reject(requeue=false) 的消息进入 DLQ
+        let mut queue_args = lapin::types::FieldTable::default();
+        queue_args.insert(
+            "x-dead-letter-exchange".into(),
+            lapin::types::AMQPValue::LongString(dlq_exchange.clone().into()),
+        );
+
         // 声明状态更新队列（Fanout from build status）
         let status_queue = "build.status.queue";
         let _queue = self
@@ -312,7 +365,7 @@ impl RabbitMqConsumer {
                     durable: true,
                     ..Default::default()
                 },
-                lapin::types::FieldTable::default(),
+                queue_args.clone(),
             )
             .await
             .context("Failed to declare status queue")?;
@@ -341,7 +394,7 @@ impl RabbitMqConsumer {
                     durable: true,
                     ..Default::default()
                 },
-                lapin::types::FieldTable::default(),
+                queue_args.clone(),
             )
             .await
             .context("Failed to declare log queue")?;
@@ -360,105 +413,133 @@ impl RabbitMqConsumer {
 
         info!("Declared and bound log queue: {}", log_queue);
 
+        // 声明 DLQ 队列并绑定，确保死信有落脚点（否则会被 broker 丢弃）
+        for (dlq_name, routing) in [
+            ("build.status.dlq", "build.status.#"),
+            ("build.log.dlq", "build.log.#"),
+        ] {
+            self.channel
+                .queue_declare(
+                    short_string(dlq_name),
+                    QueueDeclareOptions {
+                        durable: true,
+                        ..Default::default()
+                    },
+                    lapin::types::FieldTable::default(),
+                )
+                .await
+                .with_context(|| format!("Failed to declare dead letter queue {}", dlq_name))?;
+            self.channel
+                .queue_bind(
+                    short_string(dlq_name),
+                    short_string(dlq_exchange.clone()),
+                    short_string(routing),
+                    QueueBindOptions::default(),
+                    lapin::types::FieldTable::default(),
+                )
+                .await
+                .with_context(|| format!("Failed to bind dead letter queue {}", dlq_name))?;
+            info!("Declared and bound dead letter queue: {}", dlq_name);
+        }
+
+        Ok(())
+    }
+
+    /// 消费队列的通用循环：处理成功才 ack；
+    /// 处理失败首次 requeue 重试，redelivery 仍失败则路由到 DLQ。
+    async fn consume_with_handler<F, Fut>(&self, queue: &str, mut handler: F) -> Result<()>
+    where
+        F: FnMut(Vec<u8>, lapin::message::Delivery) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        // consumer tag 必须在 channel 内唯一：status/log 两个消费者共用
+        // 同一 channel，固定同名 tag 会让第二个被 broker 以 NOT_ALLOWED 拒绝
+        let consumer_tag = format!("{}_{}", queue.replace('.', "_"), uuid::Uuid::new_v4());
+        let consumer = self
+            .channel
+            .basic_consume(
+                short_string(queue),
+                short_string(consumer_tag),
+                BasicConsumeOptions::default(),
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .with_context(|| format!("Failed to create consumer for {}", queue))?;
+
+        info!("Started consuming messages from: {}", queue);
+
+        use futures::StreamExt;
+        pin_mut!(consumer);
+
+        while let Some(delivery_result) = consumer.next().await {
+            let delivery = match delivery_result {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Consumer error on {}: {}", queue, e);
+                    // 连接/通道级错误：返回 Err 让上层重建连接
+                    return Err(anyhow::Error::new(e).context("consumer stream error"));
+                }
+            };
+
+            let data = delivery.data.clone();
+            let delivery_tag = delivery.delivery_tag;
+            let redelivered = delivery.redelivered;
+            match handler(data, delivery).await {
+                Ok(()) => {
+                    if let Err(e) = self
+                        .channel
+                        .basic_ack(delivery_tag, BasicAckOptions::default())
+                        .await
+                    {
+                        tracing::error!("Failed to ack message on {}: {}", queue, e);
+                    }
+                }
+                Err(e) => {
+                    // 首次投递失败 → requeue 重试一次；redelivery 仍失败 → 进 DLQ
+                    if redelivered {
+                        tracing::error!(
+                            queue = %queue,
+                            error = %e,
+                            "Handler failed on redelivered message, routing to DLQ"
+                        );
+                        let _ = self
+                            .channel
+                            .basic_reject(delivery_tag, BasicRejectOptions { requeue: false })
+                            .await;
+                    } else {
+                        tracing::warn!(
+                            queue = %queue,
+                            error = %e,
+                            "Handler failed, requeueing for one retry"
+                        );
+                        let _ = self
+                            .channel
+                            .basic_nack(delivery_tag, BasicNackOptions { requeue: true, ..Default::default() })
+                            .await;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
     /// 启动状态消息消费者
-    pub async fn consume_status_messages<F>(&self, mut handler: F) -> Result<()>
+    pub async fn consume_status_messages<F, Fut>(&self, handler: F) -> Result<()>
     where
-        F: FnMut(Vec<u8>) + Send + 'static,
+        F: FnMut(Vec<u8>, lapin::message::Delivery) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
     {
-        let queue = "build.status.queue";
-        let consumer = self
-            .channel
-            .basic_consume(
-                short_string(queue),
-                short_string("status_consumer"),
-                BasicConsumeOptions::default(),
-                lapin::types::FieldTable::default(),
-            )
-            .await
-            .context("Failed to create status consumer")?;
-
-        info!("Started consuming status messages from: {}", queue);
-
-        // 消费消息 - 使用 StreamExt
-        use futures::StreamExt;
-        pin_mut!(consumer);
-
-        while let Some(delivery_result) = consumer.next().await {
-            match delivery_result {
-                Ok(delivery) => {
-                    let data = delivery.data.clone();
-
-                    // 调用处理函数
-                    handler(data);
-
-                    // 确认消息
-                    if let Err(e) = self
-                        .channel
-                        .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
-                        .await
-                    {
-                        tracing::error!("Failed to ack message: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Consumer error: {}", e);
-                }
-            }
-        }
-
-        Ok(())
+        self.consume_with_handler("build.status.queue", handler).await
     }
 
     /// 启动日志消息消费者
-    pub async fn consume_log_messages<F>(&self, mut handler: F) -> Result<()>
+    pub async fn consume_log_messages<F, Fut>(&self, handler: F) -> Result<()>
     where
-        F: FnMut(Vec<u8>) + Send + 'static,
+        F: FnMut(Vec<u8>, lapin::message::Delivery) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
     {
-        let queue = "build.log.queue";
-        let consumer = self
-            .channel
-            .basic_consume(
-                short_string(queue),
-                short_string("log_consumer"),
-                BasicConsumeOptions::default(),
-                lapin::types::FieldTable::default(),
-            )
-            .await
-            .context("Failed to create log consumer")?;
-
-        info!("Started consuming log messages from: {}", queue);
-
-        // 消费消息
-        use futures::StreamExt;
-        pin_mut!(consumer);
-
-        while let Some(delivery_result) = consumer.next().await {
-            match delivery_result {
-                Ok(delivery) => {
-                    let data = delivery.data.clone();
-
-                    // 调用处理函数
-                    handler(data);
-
-                    // 确认消息
-                    if let Err(e) = self
-                        .channel
-                        .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
-                        .await
-                    {
-                        tracing::error!("Failed to ack log message: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Log consumer error: {}", e);
-                }
-            }
-        }
-
-        Ok(())
+        self.consume_with_handler("build.log.queue", handler).await
     }
 }
 

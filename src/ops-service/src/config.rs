@@ -69,6 +69,7 @@ pub struct SecurityConfig {
     /// 是否信任 X-Forwarded-For 头
     pub trust_proxy: bool,
     /// IP 白名单（可选）
+    #[serde(default, deserialize_with = "deserialize_allowed_ips")]
     pub allowed_ips: Option<Vec<String>>,
     /// Runner API Key（使用 Secret 包装，用于 Runner 注册和心跳鉴权）
     #[serde(default)]
@@ -93,6 +94,34 @@ pub struct SecurityConfig {
     /// 登录失败速率限制：滑动窗口时长（秒）
     #[serde(default = "default_login_rate_limit_window_secs")]
     pub login_rate_limit_window_secs: u64,
+
+    /// 主机 SSH 凭据落盘加密密钥（32 字节 hex 或任意 >=32 字符口令，可选）。
+    /// 未配置时凭据明文存储并输出启动警告。
+    #[serde(default)]
+    pub credential_encryption_key: Option<SecretString>,
+}
+
+/// 环境变量来源的 ALLOWED_IPS 是字符串（空串或逗号分隔列表），
+/// 而非 JSON 序列；兼容两种形态
+fn deserialize_allowed_ips<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        List(Vec<String>),
+        Str(String),
+        Null,
+    }
+
+    match Repr::deserialize(deserializer)? {
+        Repr::Null => Ok(None),
+        Repr::List(v) if v.is_empty() => Ok(None),
+        Repr::List(v) => Ok(Some(v)),
+        Repr::Str(s) if s.trim().is_empty() => Ok(None),
+        Repr::Str(s) => Ok(Some(s.split(',').map(|ip| ip.trim().to_string()).collect())),
+    }
 }
 
 fn default_webhook_max_skew_secs() -> u64 {
@@ -109,6 +138,42 @@ fn default_login_rate_limit_max_attempts() -> u32 {
 
 fn default_login_rate_limit_window_secs() -> u64 {
     300
+}
+
+/// 终态通知配置（群机器人 webhook）
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotifyConfig {
+    /// 是否启用终态通知
+    #[serde(default)]
+    pub enabled: bool,
+    /// 群机器人 webhook 地址
+    #[serde(default)]
+    pub webhook_url: Option<SecretString>,
+    /// 渠道类型：feishu | dingtalk | wecom | slack
+    #[serde(default = "default_notify_kind")]
+    pub kind: String,
+    /// 推送超时（秒）
+    #[serde(default = "default_notify_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_notify_kind() -> String {
+    "feishu".to_string()
+}
+
+fn default_notify_timeout() -> u64 {
+    5
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            webhook_url: None,
+            kind: default_notify_kind(),
+            timeout_secs: default_notify_timeout(),
+        }
+    }
 }
 
 /// Metrics 暴露配置
@@ -183,6 +248,9 @@ pub struct AppConfig {
     /// Metrics 暴露配置
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// 终态通知配置
+    #[serde(default)]
+    pub notifications: NotifyConfig,
 }
 
 /// 并发控制配置
@@ -412,7 +480,7 @@ impl AppConfig {
         let mut settings = Config::builder();
 
         // 添加默认配置
-    settings = settings
+        settings = settings
         .set_default("server.addr", "0.0.0.0:3000")?
         .set_default("server.graceful_shutdown_timeout_secs", 30)?
         .set_default("database.max_connections", 10)?
@@ -423,7 +491,11 @@ impl AppConfig {
         .set_default("database.auto_create_if_missing", true)?
         .set_default("logging.level", "info")?
         .set_default("logging.format", "json")?
-        .set_default("security.jwt_secret", "change-this-secret-in-production-min-32-chars!")?
+        // 安全默认值：
+        // - jwt_secret 不再提供默认值：缺失时反序列化直接失败，服务拒绝启动
+        //   （否则公知的默认密钥允许任何人伪造 admin token）
+        // - trust_proxy 默认 false：不在反代后部署时信任 X-Forwarded-For
+        //   会让客户端伪造来源 IP 绕过限流与 IP 白名单
         .set_default("security.access_token_exp_secs", 900)?
         .set_default("security.refresh_token_exp_secs", 604800)?
         .set_default("security.password_min_length", 8)?
@@ -433,12 +505,16 @@ impl AppConfig {
         .set_default("security.max_login_attempts", 5)?
         .set_default("security.login_lockout_duration_secs", 1800)?
         .set_default("security.rate_limit_rps", 100)?
-        .set_default("security.trust_proxy", true)?
+        .set_default("security.trust_proxy", false)?
         .set_default("security.login_rate_limit_max_attempts", 10)?
         .set_default("security.login_rate_limit_window_secs", 300)?
         // Metrics 默认配置
         .set_default("metrics.enabled", true)?
         .set_default("metrics.require_whitelist", false)?
+        // 终态通知默认配置
+        .set_default("notifications.enabled", false)?
+        .set_default("notifications.kind", "feishu")?
+        .set_default("notifications.timeout_secs", 5)?
             // SSH 默认配置
             .set_default("ssh.default_username", "root")?
             .set_default("ssh.default_password", "")?
@@ -480,12 +556,11 @@ impl AppConfig {
     /// 验证配置合法性
     fn validate(&self) -> Result<(), ConfigError> {
         // 验证端口范围
-        if let Some(port_str) = self.server.addr.split(':').next_back() {
-            if let Ok(port) = port_str.parse::<u16>() {
-                if port < 1024 {
-                    return Err(ConfigError::Message("Server port should be >= 1024".to_string()));
-                }
-            }
+        if let Some(port_str) = self.server.addr.split(':').next_back()
+            && let Ok(port) = port_str.parse::<u16>()
+            && port < 1024
+        {
+            return Err(ConfigError::Message("Server port should be >= 1024".to_string()));
         }
 
         // 验证日志级别
@@ -495,7 +570,7 @@ impl AppConfig {
                 return Err(ConfigError::Message(format!(
                     "Invalid log level: {}. Must be one of: trace, debug, info, warn, error",
                     self.logging.level
-                )))
+                )));
             }
         }
 
@@ -506,7 +581,7 @@ impl AppConfig {
                 return Err(ConfigError::Message(format!(
                     "Invalid log format: {}. Must be one of: json, pretty",
                     self.logging.format
-                )))
+                )));
             }
         }
 
@@ -562,7 +637,7 @@ impl AppConfig {
                 return Err(ConfigError::Message(format!(
                     "Invalid concurrency strategy: {}. Must be one of: reject, wait, queue",
                     self.concurrency.strategy
-                )))
+                )));
             }
         }
 
@@ -571,6 +646,23 @@ impl AppConfig {
             return Err(ConfigError::Message(
                 "concurrency.global_limit must be between 0 and 1000".to_string(),
             ));
+        }
+
+        // Runner API Key 未配置时注册/心跳接口完全开放（见 runner_auth_middleware），
+        // 只允许显式接受该风险的部署使用
+        if self.security.runner_api_key.is_none() {
+            tracing::warn!(
+                "OPS_SECURITY__RUNNER_API_KEY is not configured: runner register/heartbeat endpoints are UNAUTHENTICATED. \
+                 Set it to require authentication."
+            );
+        }
+
+        // 主机凭据加密密钥未配置时凭据明文落库
+        if self.security.credential_encryption_key.is_none() {
+            tracing::warn!(
+                "OPS_SECURITY__CREDENTIAL_ENCRYPTION_KEY is not configured: host SSH credentials are stored in PLAINTEXT. \
+                 Set it (>=32 chars) to enable encryption at rest."
+            );
         }
 
         Ok(())
@@ -582,61 +674,95 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    // edition 2024 中 std::env::set_var/remove_var 为 unsafe；
+    // 下方所有 env 访问均标注 #[serial]，满足单线程前提
+
     #[test]
     #[serial]
     fn test_config_defaults() {
         // 清理所有可能的环境变量
-        std::env::remove_var("OPS_DATABASE__URL");
-        std::env::remove_var("OPS_SERVER__ADDR");
-        std::env::remove_var("OPS_LOGGING__LEVEL");
-        std::env::remove_var("OPS_LOGGING__FORMAT");
-        std::env::remove_var("OPS_SECURITY__JWT_SECRET");
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
+        unsafe { std::env::remove_var("OPS_SERVER__ADDR") };
+        unsafe { std::env::remove_var("OPS_LOGGING__LEVEL") };
+        unsafe { std::env::remove_var("OPS_LOGGING__FORMAT") };
+        unsafe { std::env::remove_var("OPS_SECURITY__JWT_SECRET") };
 
         // 设置测试环境变量
-        std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db");
+        unsafe { std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db") };
+        unsafe { std::env::set_var("OPS_SECURITY__JWT_SECRET", "test_secret_key_at_least_32_chars!") };
 
         let config = AppConfig::from_env().unwrap();
         assert_eq!(config.server.addr, "0.0.0.0:3000");
         assert_eq!(config.logging.level, "info");
 
-        std::env::remove_var("OPS_DATABASE__URL");
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
     }
 
     #[test]
     #[serial]
     fn test_config_validation_invalid_port() {
         // 清理环境变量
-        std::env::remove_var("OPS_SERVER__ADDR");
-        std::env::remove_var("OPS_SERVER__ADDR");
-        std::env::remove_var("OPS_DATABASE__URL");
-        std::env::remove_var("OPS_DATABASE__URL");
+        unsafe { std::env::remove_var("OPS_SERVER__ADDR") };
+        unsafe { std::env::remove_var("OPS_SERVER__ADDR") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
 
-        std::env::set_var("OPS_SERVER__ADDR", "0.0.0.0:80");
-        std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db");
+        unsafe { std::env::set_var("OPS_SERVER__ADDR", "0.0.0.0:80") };
+        unsafe { std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db") };
+        unsafe { std::env::set_var("OPS_SECURITY__JWT_SECRET", "test_secret_key_at_least_32_chars!") };
 
         let result = AppConfig::from_env();
         assert!(result.is_err());
 
-        std::env::remove_var("OPS_SERVER__ADDR");
-        std::env::remove_var("OPS_DATABASE__URL");
+        unsafe { std::env::remove_var("OPS_SERVER__ADDR") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
     }
 
     #[test]
     #[serial]
     fn test_config_validation_invalid_log_level() {
         // 清理环境变量
-        std::env::remove_var("OPS_LOGGING__LEVEL");
-        std::env::remove_var("OPS_LOGGING__LEVEL");
-        std::env::remove_var("OPS_DATABASE__URL");
-        std::env::remove_var("OPS_DATABASE__URL");
+        unsafe { std::env::remove_var("OPS_LOGGING__LEVEL") };
+        unsafe { std::env::remove_var("OPS_LOGGING__LEVEL") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
 
-        std::env::set_var("OPS_LOGGING__LEVEL", "invalid");
-        std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db");
+        unsafe { std::env::set_var("OPS_LOGGING__LEVEL", "invalid") };
+        unsafe { std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db") };
+        unsafe { std::env::set_var("OPS_SECURITY__JWT_SECRET", "test_secret_key_at_least_32_chars!") };
 
         let result = AppConfig::from_env();
         assert!(result.is_err());
 
-        std::env::remove_var("OPS_LOGGING__LEVEL");
-        std::env::remove_var("OPS_DATABASE__URL");
+        unsafe { std::env::remove_var("OPS_LOGGING__LEVEL") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
+    }
+
+    #[test]
+    #[serial]
+    fn test_allowed_ips_env_string_forms() {
+        unsafe { std::env::remove_var("OPS_SECURITY__ALLOWED_IPS") };
+        unsafe { std::env::set_var("OPS_DATABASE__URL", "postgresql://user:pass@localhost/db") };
+        unsafe { std::env::set_var("OPS_SECURITY__JWT_SECRET", "test_secret_key_at_least_32_chars!") };
+
+        // 未设置 → None
+        let config = AppConfig::from_env().unwrap();
+        assert_eq!(config.security.allowed_ips, None);
+
+        // 空串（docker-compose 的 ${ALLOWED_IPS:-} 默认值）→ None
+        unsafe { std::env::set_var("OPS_SECURITY__ALLOWED_IPS", "") };
+        let config = AppConfig::from_env().unwrap();
+        assert_eq!(config.security.allowed_ips, None);
+
+        // 逗号分隔列表 → Some
+        unsafe { std::env::set_var("OPS_SECURITY__ALLOWED_IPS", "10.0.0.1, 10.0.0.2") };
+        let config = AppConfig::from_env().unwrap();
+        assert_eq!(
+            config.security.allowed_ips,
+            Some(vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()])
+        );
+
+        unsafe { std::env::remove_var("OPS_SECURITY__ALLOWED_IPS") };
+        unsafe { std::env::remove_var("OPS_DATABASE__URL") };
     }
 }

@@ -1,7 +1,7 @@
 //! 健康检查处理器
 //! 提供 /health、/ready 和 /system/concurrency 端点
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

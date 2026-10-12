@@ -35,8 +35,12 @@ services:
       OPS_SERVER__ADDR: 0.0.0.0:3000
       
       # 安全配置 (生产环境请务必修改)
-      OPS_SECURITY__JWT_SECRET: ${JWT_SECRET:-please_change_this_to_a_very_long_random_string}
-      OPS_SECURITY__RUNNER_API_KEY: ${RUNNER_API_KEY:-runner_secret}
+      # 生产环境强制显式注入：不再提供可用的回退默认值
+      OPS_SECURITY__JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a random >=32 char string}
+      # 生产环境强制显式注入
+      OPS_SECURITY__RUNNER_API_KEY: ${RUNNER_API_KEY:?RUNNER_API_KEY must be set}
+      # 主机 SSH 凭据落盘加密密钥（可选，>=32 字符）
+      OPS_SECURITY__CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
       OPS_SECURITY__TRUST_PROXY: "true"
       
       # SSH 配置

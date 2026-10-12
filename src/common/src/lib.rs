@@ -9,6 +9,8 @@ pub mod docker;
 pub mod error;
 pub mod execution;
 pub mod messages;
+pub mod pipeline;
+pub mod sigv4;
 pub mod ssh;
 
 // 重新导出常用的类型和常量
@@ -16,6 +18,7 @@ pub use error::{AppError, ErrorDetail, ErrorResponse, Result as CommonResult};
 pub use messages::{
     AuthInfo,
     BuildArtifact,
+    BuildCancelMessage,
     BuildLogMessage,
     BuildParameters,
     BuildStatus,
@@ -43,6 +46,8 @@ pub use messages::{
     StepType,
     SystemInfo,
 };
+
+pub use pipeline::{DEFAULT_PIPELINE_FILE, PipelineFile, PipelineStep};
 
 pub use execution::{
     ExecutionResult, ExecutionStatistics, FailureReason, FailureReasonStats, StepExecutionStatus,

@@ -1,4 +1,4 @@
-.PHONY: help fmt clippy build ci docker-up docker-down package package-all package-x86_64 package-arm64 package-clean package-validate dist-x86_64 dist-arm64 dist-all
+.PHONY: help fmt clippy build test e2e ci docker-up docker-down package package-all package-x86_64 package-arm64 package-clean package-validate dist-x86_64 dist-arm64 dist-all
 
 help:
 	@echo "运维系统 - 构建命令"
@@ -7,6 +7,8 @@ help:
 	@echo "  make fmt                - 格式化代码"
 	@echo "  make clippy             - 运行 clippy 检查"
 	@echo "  make build              - 构建项目"
+	@echo "  make test               - 运行单元/集成测试"
+	@echo "  make e2e                - 运行端到端部署测试（docker + service + runner）"
 	@echo "  make ci                 - 运行完整 CI 检查"
 	@echo "  make docker-up          - 启动 Docker 环境"
 	@echo "  make docker-down        - 停止 Docker 环境"
@@ -34,6 +36,17 @@ clippy:
 build:
 	@echo "🔨 构建项目..."
 	@cargo build --release --workspace
+
+test:
+	@echo "🧪 运行测试..."
+	@cargo test --workspace
+
+# 端到端部署测试：独立容器(pg+mq) + 控制面 + runner，
+# 覆盖 注册/构建/日志/产物/取消/重试 全链路（scripts/e2e.sh）
+# 可选变量: E2E_EXEC=native（跳过镜像拉取）、E2E_KEEP=1（失败保留现场）
+e2e:
+	@echo "🚀 运行端到端部署测试..."
+	@bash scripts/e2e.sh
 
 ci: fmt clippy
 	@echo "✅ CI 检查完成!"

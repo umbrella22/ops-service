@@ -30,7 +30,9 @@ pub struct RoleBinding {
     pub id: Uuid,
     pub user_id: Uuid,
     pub role_id: Uuid,
-    pub role_name: String,  // Joined from roles table
+    // Joined from roles table；经 RETURNING *（无 JOIN）返回时为空串
+    #[sqlx(default)]
+    pub role_name: String,
     pub scope_type: String, // global, group, environment
     pub scope_value: Option<String>,
     pub created_at: DateTime<Utc>,

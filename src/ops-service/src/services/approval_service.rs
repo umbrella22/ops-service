@@ -2,7 +2,7 @@
 //! P3 阶段：审批流服务
 
 use chrono::{Duration, Utc};
-use sqlx::{Pool, Postgres};
+use sqlx::{AssertSqlSafe, Pool, Postgres};
 use std::sync::Arc;
 use tracing::{error, info, instrument};
 use uuid::Uuid;
@@ -158,7 +158,7 @@ impl ApprovalService {
 
         query.push_str(" ORDER BY requested_at DESC LIMIT 100");
 
-        let mut q = sqlx::query_as::<_, ApprovalRequest>(&query);
+        let mut q = sqlx::query_as::<_, ApprovalRequest>(AssertSqlSafe(query));
 
         if let Some(status) = filters.status {
             q = q.bind(status);
@@ -222,10 +222,11 @@ impl ApprovalService {
         }
 
         // 检查是否已经过期
-        if let Some(expires_at) = approval_req.expires_at {
-            if Utc::now() > expires_at {
-                // 标记为超时
-                sqlx::query("UPDATE approval_requests SET status = 'timeout', completed_at = NOW() WHERE id = $1")
+        if let Some(expires_at) = approval_req.expires_at
+            && Utc::now() > expires_at
+        {
+            // 标记为超时
+            sqlx::query("UPDATE approval_requests SET status = 'timeout', completed_at = NOW() WHERE id = $1")
                     .bind(approval_id)
                     .execute(&mut *tx)
                     .await
@@ -234,13 +235,12 @@ impl ApprovalService {
                         AppError::database("Failed to update approval status")
                     })?;
 
-                tx.commit().await.map_err(|e| {
-                    error!(error = %e, "Failed to commit transaction");
-                    AppError::database("Failed to commit transaction")
-                })?;
+            tx.commit().await.map_err(|e| {
+                error!(error = %e, "Failed to commit transaction");
+                AppError::database("Failed to commit transaction")
+            })?;
 
-                return Err(AppError::validation("Approval request has expired"));
-            }
+            return Err(AppError::validation("Approval request has expired"));
         }
 
         // 检查是否已经审批过
@@ -484,8 +484,7 @@ impl ApprovalService {
             }
         }
 
-        let requires_approval =
-            is_production || exceeds_threshold || is_high_risk || is_critical;
+        let requires_approval = is_production || exceeds_threshold || is_high_risk || is_critical;
 
         if requires_approval {
             info!(

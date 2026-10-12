@@ -5,9 +5,9 @@ use crate::{
     services::audit_service::AuditAction,
 };
 use axum::{
+    Json,
     extract::{Path, Query, State},
     response::IntoResponse,
-    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -85,7 +85,7 @@ pub async fn create_group(
     let group = repo.create_group(&req, auth_context.user_id).await?;
 
     // 审计日志
-    state
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -95,7 +95,10 @@ pub async fn create_group(
             Some(&format!("Created asset group: {} in {}", group.name, group.environment)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, group_id = %group.id, "Failed to write audit log for group create");
+    }
 
     Ok(Json(json!({
         "message": "资产组创建成功",
@@ -157,7 +160,7 @@ pub async fn update_group(
         .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
     // 审计日志
-    state
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -167,7 +170,10 @@ pub async fn update_group(
             Some(&format!("Updated asset group: {}", group.name)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, group_id = %group.id, "Failed to write audit log for group update");
+    }
 
     Ok(Json(json!({
         "message": "资产组更新成功",
@@ -199,7 +205,7 @@ pub async fn delete_group(
     repo.delete_group(id).await?;
 
     // 审计日志
-    state
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -209,7 +215,10 @@ pub async fn delete_group(
             Some(&format!("Deleted asset group: {}", group_name)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, group_id = %id, "Failed to write audit log for group delete");
+    }
 
     Ok(Json(json!({
         "message": "资产组删除成功"
@@ -256,43 +265,54 @@ pub async fn list_hosts(
 
     let repo = crate::repository::AssetRepository::new(state.db.clone());
 
+    // 作用域转换为 SQL 过滤条件（None = 不限制；Some(空列表) = 无权访问）
+    let global_env = allowed_environments.contains(&"*".to_string());
+    let global_group = allowed_groups.contains(&"*".to_string());
+    let allowed_env_filter = if global_env {
+        None
+    } else {
+        Some(allowed_environments.clone())
+    };
+    let allowed_group_filter = if global_group {
+        None
+    } else {
+        Some(
+            allowed_groups
+                .iter()
+                .filter_map(|g| Uuid::parse_str(g).ok())
+                .collect::<Vec<_>>(),
+        )
+    };
+
     let filters = HostListFilters {
         group_id: query.group_id,
         environment: query.environment,
         status: query.status,
         tags: query.tags,
         search: query.search,
+        allowed_environments: allowed_env_filter,
+        allowed_groups: allowed_group_filter.clone(),
     };
 
-    let hosts = repo.list_hosts(&filters, query.limit, query.offset).await?;
-
-    // 应用作用域过滤
-    let filtered_hosts: Vec<_> = if allowed_environments.contains(&"*".to_string())
-        && allowed_groups.contains(&"*".to_string())
+    // 作用域为空集合（只有受限作用域但没有任何可访问值）→ 直接返回空页
+    if filters.allowed_environments.as_ref().is_some_and(|v| v.is_empty())
+        || filters.allowed_groups.as_ref().is_some_and(|v| v.is_empty())
     {
-        // 用户有全局权限
-        hosts
-    } else {
-        hosts
-            .into_iter()
-            .filter(|h| {
-                // 检查环境权限
-                let env_ok = allowed_environments.contains(&"*".to_string())
-                    || allowed_environments.contains(&h.environment);
-                // 检查分组权限
-                let group_ok = allowed_groups.contains(&"*".to_string())
-                    || allowed_groups.contains(&h.group_id.to_string());
-                env_ok && group_ok
-            })
-            .collect()
-    };
+        return Ok(Json(json!({ "hosts": [], "count": 0, "total": 0 })));
+    }
 
-    let count = filtered_hosts.len() as i64;
+    // limit 钳制（此前可传 limit=10^9）
+    let limit = query.limit.clamp(1, 200);
+    let offset = query.offset.max(0);
+
+    let total = repo.count_hosts(&filters).await?;
+    let hosts = repo.list_hosts(&filters, limit, offset).await?;
+    let count = hosts.len() as i64;
 
     Ok(Json(json!({
-        "hosts": filtered_hosts,
-        "count": filtered_hosts.len(),
-        "total": count
+        "hosts": hosts,
+        "count": count,
+        "total": total
     })))
 }
 
@@ -308,11 +328,15 @@ pub async fn create_host(
         .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
+    if let Err(msg) = req.validate() {
+        return Err(AppError::validation(&msg));
+    }
+
     let repo = crate::repository::AssetRepository::new(state.db.clone());
     let host = repo.create_host(&req, auth_context.user_id).await?;
 
-    // 审计日志
-    state
+    // 审计日志（审计失败不应让已成功的业务变更返回 500）
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -322,7 +346,10 @@ pub async fn create_host(
             Some(&format!("Created host: {}", host.identifier)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, host_id = %host.id, "Failed to write audit log for host create");
+    }
 
     Ok(Json(json!({
         "message": "主机创建成功",
@@ -386,14 +413,20 @@ pub async fn update_host(
         .require_permission(auth_context.user_id, "asset", "write", None, None)
         .await?;
 
+    if let Some(port) = req.port
+        && !(1..=65535).contains(&port)
+    {
+        return Err(AppError::validation("port must be between 1 and 65535"));
+    }
+
     let repo = crate::repository::AssetRepository::new(state.db.clone());
     let host = repo
         .update_host(id, &req, auth_context.user_id)
         .await?
         .ok_or_else(|| AppError::not_found("Resource not found"))?;
 
-    // 审计日志
-    state
+    // 审计日志（审计失败不应让已成功的业务变更返回 500）
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -403,7 +436,10 @@ pub async fn update_host(
             Some(&format!("Updated host: {}", host.identifier)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, host_id = %host.id, "Failed to write audit log for host update");
+    }
 
     Ok(Json(json!({
         "message": "主机更新成功",
@@ -435,7 +471,7 @@ pub async fn delete_host(
     repo.delete_host(id).await?;
 
     // 审计日志
-    state
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -445,7 +481,10 @@ pub async fn delete_host(
             Some(&format!("Deleted host: {}", host_info)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, host_id = %id, "Failed to write audit log for host delete");
+    }
 
     Ok(Json(json!({
         "message": "主机删除成功"

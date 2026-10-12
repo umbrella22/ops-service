@@ -3,7 +3,9 @@
 pub mod approval_service;
 pub mod audit_service;
 pub mod auth_service;
+pub mod crypto_service;
 pub mod job_service;
+pub mod notify_service;
 pub mod permission_service;
 pub mod runner_service;
 pub mod storage_service;

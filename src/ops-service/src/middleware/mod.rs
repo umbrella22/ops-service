@@ -14,8 +14,8 @@ use secrecy::ExposeSecret;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::Instrument;
@@ -68,6 +68,33 @@ pub struct AppState {
     pub webhook_nonce_store: Option<Arc<webhook_hmac::NonceStore>>,
     /// Runner 配置版本号（单调递增，供 Runner 检测配置变更）
     pub runner_config_version: Arc<AtomicU64>,
+    /// 终态通知服务（未启用时为 None）
+    pub notify_service: Option<Arc<crate::services::notify_service::NotifyService>>,
+}
+
+// 请求上下文任务本地量：handler / 错误响应 / 审计服务可读取当前请求的
+// request_id，实现"错误响应里的 request_id == 日志里的 request_id"
+tokio::task_local! {
+    static REQUEST_CONTEXT: RequestContext;
+}
+
+/// 读取当前请求的 request_id（不在请求作用域内时返回 None）
+pub fn current_request_id() -> Option<String> {
+    REQUEST_CONTEXT
+        .try_with(|ctx| ctx.request_id.clone())
+        .ok()
+}
+
+/// 读取当前请求的 trace_id
+pub fn current_trace_id() -> Option<String> {
+    REQUEST_CONTEXT
+        .try_with(|ctx| ctx.trace_id.clone())
+        .ok()
+}
+
+/// 读取当前请求完整上下文
+pub fn with_request_context<R>(f: impl FnOnce(&RequestContext) -> R) -> Option<R> {
+    REQUEST_CONTEXT.try_with(|ctx| f(ctx)).ok()
 }
 
 /// 请求追踪中间件
@@ -88,7 +115,7 @@ pub async fn request_tracking_middleware(mut req: Request, next: Next) -> Respon
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // 创建 RequestContext 并注入 extensions
+    // 创建 RequestContext 并注入 extensions（保留一份给任务本地量）
     let request_context = RequestContext {
         request_id: request_id.clone(),
         trace_id: trace_id.clone(),
@@ -96,7 +123,7 @@ pub async fn request_tracking_middleware(mut req: Request, next: Next) -> Respon
         user_agent,
         auth_subject: None,
     };
-    req.extensions_mut().insert(request_context);
+    req.extensions_mut().insert(request_context.clone());
 
     let span = tracing::info_span!(
         "http_request",
@@ -109,7 +136,11 @@ pub async fn request_tracking_middleware(mut req: Request, next: Next) -> Respon
     async move {
         let start = Instant::now();
 
-        let response = next.run(req).await;
+        // 将 RequestContext 挂到任务本地量上，使错误响应与审计能关联 request_id
+        let ctx_for_scope = request_context.clone();
+        let response = REQUEST_CONTEXT
+            .scope(ctx_for_scope, next.run(req))
+            .await;
 
         let elapsed = start.elapsed();
 
@@ -162,11 +193,21 @@ pub async fn request_tracking_middleware(mut req: Request, next: Next) -> Respon
     .await
 }
 
-/// 从请求头中提取或生成 trace_id
+/// 从请求头中提取或生成 trace_id。
+/// 客户端提供的 trace_id 会被原样写进日志与响应头，必须限制长度和
+/// 字符集（此前任意长度/内容可直接注入日志与 HTTP 头）。
 fn extract_or_generate_trace_id(headers: &HeaderMap) -> String {
+    const MAX_TRACE_ID_LEN: usize = 128;
     headers
         .get("x-trace-id")
         .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= MAX_TRACE_ID_LEN
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
         .map(|s| s.to_string())
         .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
@@ -257,46 +298,42 @@ pub fn get_client_ip_with_addr(
     // 如果信任代理，优先从代理头获取
     if trust_proxy {
         // 1. 尝试 X-Forwarded-For（可能包含多个 IP，取第一个）
-        if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-            if let Ok(forwarded_str) = forwarded_for.to_str() {
-                if let Some(first_ip) = forwarded_str.split(',').next() {
-                    let ip_str = first_ip.trim();
-                    if let Ok(addr) = ip_str.parse::<IpAddr>() {
-                        tracing::debug!(client_ip = %addr, "Got IP from X-Forwarded-For");
-                        return Ok(addr);
-                    }
-                }
+        if let Some(forwarded_for) = headers.get("x-forwarded-for")
+            && let Ok(forwarded_str) = forwarded_for.to_str()
+            && let Some(first_ip) = forwarded_str.split(',').next()
+        {
+            let ip_str = first_ip.trim();
+            if let Ok(addr) = ip_str.parse::<IpAddr>() {
+                tracing::debug!(client_ip = %addr, "Got IP from X-Forwarded-For");
+                return Ok(addr);
             }
         }
 
         // 2. 尝试 X-Real-IP
-        if let Some(real_ip) = headers.get("x-real-ip") {
-            if let Ok(ip_str) = real_ip.to_str() {
-                if let Ok(addr) = ip_str.parse::<IpAddr>() {
-                    tracing::debug!(client_ip = %addr, "Got IP from X-Real-IP");
-                    return Ok(addr);
-                }
-            }
+        if let Some(real_ip) = headers.get("x-real-ip")
+            && let Ok(ip_str) = real_ip.to_str()
+            && let Ok(addr) = ip_str.parse::<IpAddr>()
+        {
+            tracing::debug!(client_ip = %addr, "Got IP from X-Real-IP");
+            return Ok(addr);
         }
 
         // 3. 尝试 CF-Connecting-IP（Cloudflare）
-        if let Some(cf_ip) = headers.get("cf-connecting-ip") {
-            if let Ok(ip_str) = cf_ip.to_str() {
-                if let Ok(addr) = ip_str.parse::<IpAddr>() {
-                    tracing::debug!(client_ip = %addr, "Got IP from CF-Connecting-IP");
-                    return Ok(addr);
-                }
-            }
+        if let Some(cf_ip) = headers.get("cf-connecting-ip")
+            && let Ok(ip_str) = cf_ip.to_str()
+            && let Ok(addr) = ip_str.parse::<IpAddr>()
+        {
+            tracing::debug!(client_ip = %addr, "Got IP from CF-Connecting-IP");
+            return Ok(addr);
         }
 
         // 4. 尝试 X-Original-Forwarded-For
-        if let Some(original_ip) = headers.get("x-original-forwarded-for") {
-            if let Ok(ip_str) = original_ip.to_str() {
-                if let Ok(addr) = ip_str.parse::<IpAddr>() {
-                    tracing::debug!(client_ip = %addr, "Got IP from X-Original-Forwarded-For");
-                    return Ok(addr);
-                }
-            }
+        if let Some(original_ip) = headers.get("x-original-forwarded-for")
+            && let Ok(ip_str) = original_ip.to_str()
+            && let Ok(addr) = ip_str.parse::<IpAddr>()
+        {
+            tracing::debug!(client_ip = %addr, "Got IP from X-Original-Forwarded-For");
+            return Ok(addr);
         }
     }
 
@@ -341,6 +378,8 @@ struct IpLimiterState {
     window_duration: Duration,
     /// 最大请求数
     max_requests: usize,
+    /// 最后一次请求时间（用于安全回收空闲 IP 的状态）
+    last_seen: std::sync::Mutex<Instant>,
 }
 
 /// 限流配置
@@ -425,19 +464,23 @@ impl IpRateLimiter {
                     requests: Arc::new(std::sync::Mutex::new(VecDeque::new())),
                     window_duration: Duration::from_secs(window_secs),
                     max_requests,
+                    last_seen: std::sync::Mutex::new(Instant::now()),
                 })
             })
             .clone()
     }
 
-    /// 清理过期的限流器
+    /// 清理空闲 IP 的限流器。
+    /// 此前实现会在条目数超阈值时随机删除前 5000 个 key（包括活跃 IP，
+    /// 会意外重置其限流窗口）；现在按"窗口时长内无请求"精确回收。
     pub async fn cleanup_expired(&self, _older_than_secs: u64) {
-        if self.limiters.len() > 10000 {
-            let keys: Vec<_> = self.limiters.iter().take(5000).map(|e| *e.key()).collect();
-            for key in keys {
-                self.limiters.remove(&key);
-            }
-        }
+        let idle_after = Duration::from_secs(
+            self.config.window_secs.get().max(self.config.login_window_secs.get()) as u64 * 2,
+        );
+        let now = Instant::now();
+        self.limiters.retain(|_, state| {
+            now.duration_since(*state.last_seen.lock().unwrap()) < idle_after
+        });
     }
 
     /// 获取当前统计
@@ -455,6 +498,7 @@ impl IpLimiterState {
     fn check(&self) -> bool {
         let mut requests = self.requests.lock().unwrap();
         let now = Instant::now();
+        *self.last_seen.lock().unwrap() = now;
 
         // 清理过期的请求记录
         while let Some(&front) = requests.front() {
@@ -488,43 +532,94 @@ pub struct RateLimiterStats {
 /// 可以在处理器中直接使用
 pub struct ClientIp(pub IpAddr);
 
-impl axum::extract::FromRequestParts<()> for ClientIp {
+impl<S> axum::extract::FromRequestParts<S> for ClientIp
+where
+    S: Send + Sync,
+{
     type Rejection = crate::error::AppError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        _state: &(),
+        _state: &S,
     ) -> Result<Self, Self::Rejection> {
-        // 尝试从扩展中获取（由限流中间件设置）
+        // 1. 限流中间件注入的 IP（已按 trust_proxy 配置解析代理头）
         if let Some(ip) = parts.extensions.get::<IpAddr>() {
             return Ok(ClientIp(*ip));
         }
 
-        // 从头部解析
-        let headers = &parts.headers;
-
-        // 尝试各种代理头
-        if let Some(forwarded) = headers.get("x-forwarded-for") {
-            if let Ok(s) = forwarded.to_str() {
-                if let Some(first) = s.split(',').next() {
-                    if let Ok(ip) = first.trim().parse::<IpAddr>() {
-                        return Ok(ClientIp(ip));
-                    }
-                }
-            }
-        }
-
-        if let Some(real_ip) = headers.get("x-real-ip") {
-            if let Ok(s) = real_ip.to_str() {
-                if let Ok(ip) = s.parse::<IpAddr>() {
-                    return Ok(ClientIp(ip));
-                }
-            }
+        // 2. 连接对端地址（不信任任何可伪造的请求头——
+        //    此前的实现无条件解析 x-forwarded-for，等于绕过 trust_proxy 开关）
+        if let Some(connect_info) = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        {
+            return Ok(ClientIp(connect_info.0.ip()));
         }
 
         // 默认返回本地回环
         Ok(ClientIp(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))))
     }
+}
+
+// ==================== Runner API Key 鉴权 ====================
+
+/// Runner API Key 鉴权中间件
+/// 验证 Runner 注册和心跳请求中的 API Key
+pub async fn runner_auth_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, crate::error::AppError> {
+    // 如果配置中未设置 runner_api_key，则跳过鉴权（用于开发/测试环境）
+    let expected_key = match &state.config.security.runner_api_key {
+        Some(key) => key.expose_secret(),
+        None => {
+            tracing::debug!("Runner API key not configured, skipping auth");
+            return Ok(next.run(req).await);
+        }
+    };
+
+    // 从请求头获取 API Key（支持多种格式）
+    let headers = req.headers();
+    let provided_key = headers
+        .get("x-runner-api-key")
+        .or_else(|| headers.get("authorization"))
+        .and_then(|v| v.to_str().ok());
+
+    let provided_key = if let Some(key) = provided_key {
+        // 处理 Bearer token 格式
+        if key.to_lowercase().starts_with("bearer ") {
+            &key[7..]
+        } else {
+            key
+        }
+    } else {
+        return Err(crate::error::AppError::authentication("Missing Runner API Key"));
+    };
+
+    // 验证 API Key（常数时间比较，避免时序侧信道）
+    if !constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) {
+        tracing::warn!(
+            runner_name = headers.get("x-runner-name").and_then(|v| v.to_str().ok()),
+            "Invalid Runner API key"
+        );
+        return Err(crate::error::AppError::authentication("Invalid Runner API Key"));
+    }
+
+    tracing::debug!("Runner API key validated successfully");
+    Ok(next.run(req).await)
+}
+
+/// 常数时间字节比较
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -572,53 +667,4 @@ mod tests {
         // 第 6 个请求应该被限流
         assert!(!limiter.check_rate_limit(&ip).await.unwrap());
     }
-}
-
-// ==================== Runner API Key 鉴权 ====================
-
-/// Runner API Key 鉴权中间件
-/// 验证 Runner 注册和心跳请求中的 API Key
-pub async fn runner_auth_middleware(
-    State(state): State<Arc<AppState>>,
-    req: Request,
-    next: Next,
-) -> Result<Response, crate::error::AppError> {
-    // 如果配置中未设置 runner_api_key，则跳过鉴权（用于开发/测试环境）
-    let expected_key = match &state.config.security.runner_api_key {
-        Some(key) => key.expose_secret(),
-        None => {
-            tracing::debug!("Runner API key not configured, skipping auth");
-            return Ok(next.run(req).await);
-        }
-    };
-
-    // 从请求头获取 API Key（支持多种格式）
-    let headers = req.headers();
-    let provided_key = headers
-        .get("x-runner-api-key")
-        .or_else(|| headers.get("authorization"))
-        .and_then(|v| v.to_str().ok());
-
-    let provided_key = if let Some(key) = provided_key {
-        // 处理 Bearer token 格式
-        if key.to_lowercase().starts_with("bearer ") {
-            &key[7..]
-        } else {
-            key
-        }
-    } else {
-        return Err(crate::error::AppError::authentication("Missing Runner API Key"));
-    };
-
-    // 验证 API Key
-    if provided_key != expected_key {
-        tracing::warn!(
-            runner_name = headers.get("x-runner-name").and_then(|v| v.to_str().ok()),
-            "Invalid Runner API key"
-        );
-        return Err(crate::error::AppError::authentication("Invalid Runner API Key"));
-    }
-
-    tracing::debug!("Runner API key validated successfully");
-    Ok(next.run(req).await)
 }

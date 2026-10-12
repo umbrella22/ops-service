@@ -237,22 +237,22 @@ impl RunnerDockerConfigRequest {
             return Err("Default timeout must be between 60 and 86400 seconds".to_string());
         }
 
-        if let Some(memory) = self.memory_limit_gb {
-            if !(1..=128).contains(&memory) {
-                return Err("Memory limit must be between 1 and 128 GB".to_string());
-            }
+        if let Some(memory) = self.memory_limit_gb
+            && !(1..=128).contains(&memory)
+        {
+            return Err("Memory limit must be between 1 and 128 GB".to_string());
         }
 
-        if let Some(cpu) = self.cpu_shares {
-            if !(128..=4096).contains(&cpu) {
-                return Err("CPU shares must be between 128 and 4096".to_string());
-            }
+        if let Some(cpu) = self.cpu_shares
+            && !(128..=4096).contains(&cpu)
+        {
+            return Err("CPU shares must be between 128 and 4096".to_string());
         }
 
-        if let Some(pids) = self.pids_limit {
-            if !(64..=65536).contains(&pids) {
-                return Err("PIDs limit must be between 64 and 65536".to_string());
-            }
+        if let Some(pids) = self.pids_limit
+            && !(64..=65536).contains(&pids)
+        {
+            return Err("PIDs limit must be between 64 and 65536".to_string());
         }
 
         Ok(())
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_default_values() {
-        assert_eq!(default_enabled(), true);
+        assert!(default_enabled());
         assert_eq!(default_image(), "ubuntu:22.04");
         assert_eq!(default_timeout(), 1800);
     }

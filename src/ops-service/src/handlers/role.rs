@@ -6,9 +6,9 @@ use crate::{
     repository::role_repo::RoleRepository, services::audit_service::AuditAction,
 };
 use axum::{
+    Json,
     extract::{Path, State},
     response::IntoResponse,
-    Json,
 };
 use serde_json::json;
 use std::sync::Arc;

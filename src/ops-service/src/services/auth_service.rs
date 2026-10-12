@@ -47,10 +47,9 @@ impl AuthService {
             .await?
             .ok_or(AppError::Unauthorized)?;
 
-        // 检查账户状态
-        self.check_account_status(&user)?;
-
-        // 检查账户是否被临时锁定
+        // 临时锁定检查必须在状态检查之前：lock_account 会把 status 置为
+        // 'locked'，而 check_account_status 对 'locked' 无条件拒绝且到期后
+        // 没有任何代码复位状态——旧顺序导致"锁定 30 分钟"实际是永久锁死。
         if let Some(locked_until) = user.locked_until {
             if locked_until > chrono::Utc::now() {
                 self.record_login_event(
@@ -67,31 +66,48 @@ impl AuthService {
                     (locked_until - chrono::Utc::now()).num_minutes().max(1)
                 )));
             }
+
+            // 锁定已到期：自动复位（幂等，仅对仍处于 locked 的行生效）
+            let _ = sqlx::query(
+                "UPDATE users SET status = 'enabled', locked_until = NULL, \
+                 failed_login_attempts = 0, updated_at = NOW() \
+                 WHERE id = $1 AND status = 'locked'",
+            )
+            .bind(user.id)
+            .execute(&self.db)
+            .await;
         }
+
+        // 检查账户状态（disabled / 未到期的 locked）
+        self.check_account_status(&user)?;
 
         // 验证密码
         let hasher = PasswordHasher::new();
         let password_valid = hasher.verify(&req.password, &user.password_hash);
 
         if password_valid.is_err() {
-            // 密码错误，增加失败计数
-            let _ = user_repo.increment_failed_attempts(user.id).await;
+            // 密码错误，原子增加失败计数并取回 DB 中的新值
+            // （此前用读取快照 +1 判断，并发登录下多算/漏算）
+            let new_attempts = user_repo
+                .increment_failed_attempts(user.id)
+                .await
+                .unwrap_or(user.failed_login_attempts + 1);
 
-            // 记录失败事件
-            self.record_login_event(
+            // 记录失败事件（带真实失败计数，供风险评估判定 brute_force）
+            self.record_login_event_inner(
                 Some(user.id),
                 &user.username,
                 "login_failure",
                 Some("invalid_password"),
                 client_ip,
                 user_agent,
+                new_attempts as i64,
             )
             .await;
 
             // 检查是否需要锁定账户（使用配置值）
             let max_attempts = self.config.security.max_login_attempts as i32;
             let lockout_secs = self.config.security.login_lockout_duration_secs;
-            let new_attempts = user.failed_login_attempts + 1;
             if new_attempts >= max_attempts {
                 let locked_until =
                     chrono::Utc::now() + chrono::Duration::seconds(lockout_secs as i64);
@@ -266,10 +282,18 @@ impl AuthService {
     }
 
     /// 检查账户状态
+    ///
+    /// `locked` 只有在锁定期内才拒绝；已到期（或无到期时间的历史数据）
+    /// 视为可登录，由调用方负责复位状态。旧行为是无条件永久拒绝。
     fn check_account_status(&self, user: &User) -> Result<(), AppError> {
         match user.status.as_str() {
             "disabled" => Err(AppError::BadRequest("账户已被禁用".to_string())),
-            "locked" => Err(AppError::BadRequest("账户已被锁定".to_string())),
+            "locked" => match user.locked_until {
+                Some(locked_until) if locked_until > chrono::Utc::now() => Err(
+                    AppError::BadRequest("账户已被锁定".to_string()),
+                ),
+                _ => Ok(()),
+            },
             "enabled" => Ok(()),
             _ => Err(AppError::Internal("Unknown account status".to_string())),
         }
@@ -339,6 +363,23 @@ impl AuthService {
         source_ip: &str,
         user_agent: Option<&str>,
     ) {
+        // 沿用旧签名：默认不带最近失败数（brute_force 判定见带计数的调用点）
+        self.record_login_event_inner(user_id, username, event_type, failure_reason, source_ip, user_agent, 0)
+            .await;
+    }
+
+    // 参数数量由调用点语义决定（登录事件字段一一对应），不做结构体包装
+    #[allow(clippy::too_many_arguments)]
+    async fn record_login_event_inner(
+        &self,
+        user_id: Option<Uuid>,
+        username: &str,
+        event_type: &str,
+        failure_reason: Option<&str>,
+        source_ip: &str,
+        user_agent: Option<&str>,
+        recent_failures: i64,
+    ) {
         let auth_repo = AuthRepository::new(self.db.clone());
 
         let event = LoginEvent {
@@ -351,7 +392,7 @@ impl AuthService {
             source_ip: source_ip.to_string(),
             user_agent: user_agent.map(|s| s.to_string()),
             device_id: None,
-            risk_tag: self.assess_login_risk(source_ip, user_agent, 0),
+            risk_tag: self.assess_login_risk(source_ip, user_agent, recent_failures),
             occurred_at: chrono::Utc::now(),
         };
 

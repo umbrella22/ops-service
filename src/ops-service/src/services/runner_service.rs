@@ -78,26 +78,57 @@ impl RunnerScheduler {
             return Err(anyhow::anyhow!("No available runners for build type: {}", build_type));
         }
 
-        // 选择最佳 Runner
-        let selected = self.select_best_runner(&candidates)?;
+        // 按负载从低到高尝试原子认领：
+        // UPDATE ... WHERE current_jobs < max_concurrent_jobs 保证并发调度
+        // 不会把同一个 runner 超派（此前 check-then-act 两个并发调度都读到
+        // 同一空位，随后各自 +1，上限形同虚设）
+        let sorted = Self::rank_candidates(&candidates);
 
-        // 生成定向路由键：build.<type>.<runner_name>
-        // 这样只有目标 runner 会收到此任务
-        let routing_key = format!("build.{}.{}", build_type, selected.name);
+        for candidate in &sorted {
+            if self.try_claim_runner(candidate.id).await? {
+                // 生成定向路由键：build.<type>.<runner_name>
+                // 这样只有目标 runner 会收到此任务
+                let routing_key = format!("build.{}.{}", build_type, candidate.name);
 
-        info!(
-            runner_id = %selected.id,
-            runner_name = %selected.name,
-            routing_key = %routing_key,
-            load_score = %selected.load_score,
-            "Runner selected for build"
-        );
+                info!(
+                    runner_id = %candidate.id,
+                    runner_name = %candidate.name,
+                    routing_key = %routing_key,
+                    load_score = %candidate.load_score,
+                    "Runner selected and claimed for build"
+                );
 
-        Ok(ScheduleResult {
-            runner_id: selected.id,
-            runner_name: selected.name.clone(),
-            routing_key,
-        })
+                return Ok(ScheduleResult {
+                    runner_id: candidate.id,
+                    runner_name: candidate.name.clone(),
+                    routing_key,
+                });
+            }
+            debug!(
+                runner_id = %candidate.id,
+                "Runner claimed concurrently by another dispatch, trying next candidate"
+            );
+        }
+
+        Err(anyhow::anyhow!(
+            "All candidate runners are at capacity for build type: {}",
+            build_type
+        ))
+    }
+
+    /// 原子认领一个 runner 容量名额：只有仍有空位时 +1 成功。
+    async fn try_claim_runner(&self, runner_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE runners
+             SET current_jobs = current_jobs + 1, updated_at = NOW()
+             WHERE id = $1 AND current_jobs < max_concurrent_jobs",
+        )
+        .bind(runner_id)
+        .execute(&self.db)
+        .await
+        .context("Failed to claim runner capacity")?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     /// 查找所有符合条件且可用的 Runner 候选者
@@ -184,37 +215,23 @@ impl RunnerScheduler {
         Ok(candidates)
     }
 
-    /// 从候选者中选择最佳 Runner
-    ///
-    /// 选择策略：
-    /// 1. 优先选择负载较低的 Runner
-    /// 2. 如果负载相同，优先选择并发上限较高的 Runner
-    /// 3. 如果仍然相同，按名称字典序选择（保证一致性）
-    fn select_best_runner(&self, candidates: &[RunnerCandidate]) -> Result<RunnerCandidate> {
-        // 按负载得分升序排序（负载越低越好）
+    /// 候选者排序：负载得分升序 → 最大并发数降序 → 名称字典序（保证一致性）
+    fn rank_candidates(candidates: &[RunnerCandidate]) -> Vec<RunnerCandidate> {
         let mut sorted = candidates.to_vec();
         sorted.sort_by(|a, b| {
-            // 首先按负载得分排序
             match a
                 .load_score
                 .partial_cmp(&b.load_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
             {
-                std::cmp::Ordering::Equal => {
-                    // 负载相同时，按最大并发数降序排序
-                    // 选择容量更大的 Runner
-                    b.max_concurrent_jobs
-                        .cmp(&a.max_concurrent_jobs)
-                        .then_with(|| a.name.cmp(&b.name))
-                }
+                std::cmp::Ordering::Equal => b
+                    .max_concurrent_jobs
+                    .cmp(&a.max_concurrent_jobs)
+                    .then_with(|| a.name.cmp(&b.name)),
                 other => other,
             }
         });
-
         sorted
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No runner candidates available"))
     }
 
     /// 计算负载得分
@@ -259,6 +276,10 @@ impl RunnerScheduler {
     }
 
     /// 增加 Runner 的当前任务计数
+    ///
+    /// 注意：`schedule_build` 已在认领时完成 +1，调度链路不应再调用本方法
+    /// （否则会双重计数）。
+    #[allow(dead_code)]
     pub async fn increment_current_jobs(&self, runner_id: Uuid) -> Result<()> {
         sqlx::query("UPDATE runners SET current_jobs = current_jobs + 1 WHERE id = $1")
             .bind(runner_id)
@@ -386,12 +407,8 @@ mod tests {
             },
         ];
 
-        let scheduler = RunnerScheduler {
-            db: sqlx::PgPool::connect_lazy("postgres://localhost/postgres").unwrap(),
-        };
-
         // 应该选择 runner-2，因为负载更低
-        let selected = scheduler.select_best_runner(&candidates).unwrap();
-        assert_eq!(selected.name, "runner-2");
+        let ranked = RunnerScheduler::rank_candidates(&candidates);
+        assert_eq!(ranked[0].name, "runner-2");
     }
 }

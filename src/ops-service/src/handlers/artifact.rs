@@ -19,7 +19,7 @@ use crate::{
 };
 
 use crate::services::audit_service::AuditLogParams;
-use sqlx::Row;
+use sqlx::{AssertSqlSafe, Row};
 
 /// 产物元数据响应
 #[derive(Debug, Serialize)]
@@ -154,6 +154,8 @@ pub async fn record_artifact(
         .require_permission(auth.user_id, "artifact", "write", None, None)
         .await?;
 
+    validate_artifact_path(&request.artifact_path)?;
+
     // 检查构建作业是否存在
     let _job_exists = sqlx::query("SELECT id, created_by FROM build_jobs WHERE id = $1")
         .bind(request.build_job_id)
@@ -166,25 +168,24 @@ pub async fn record_artifact(
         .ok_or_else(|| AppError::not_found("Build job not found"))?;
 
     // 如果指定了版本号，检查是否已存在（防止覆盖上传）
-    if let Some(ref version) = request.version {
-        if !version.is_empty() {
-            let existing = sqlx::query(
-                "SELECT id FROM build_artifacts WHERE version = $1 AND artifact_type = $2",
-            )
-            .bind(version)
-            .bind(&request.artifact_type)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to check existing artifact");
-                AppError::database("Failed to check artifact")
-            })?;
+    if let Some(ref version) = request.version
+        && !version.is_empty()
+    {
+        let existing =
+            sqlx::query("SELECT id FROM build_artifacts WHERE version = $1 AND artifact_type = $2")
+                .bind(version)
+                .bind(&request.artifact_type)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to check existing artifact");
+                    AppError::database("Failed to check artifact")
+                })?;
 
-            if existing.is_some() {
-                return Err(AppError::validation(
-                    "Artifact with this version already exists. Cannot overwrite.",
-                ));
-            }
+        if existing.is_some() {
+            return Err(AppError::validation(
+                "Artifact with this version already exists. Cannot overwrite.",
+            ));
         }
     }
 
@@ -334,7 +335,7 @@ pub async fn list_artifacts(
 
     // 计算总数（参数化）
     let count_sql = format!("SELECT COUNT(*) FROM build_artifacts WHERE {}", where_clause);
-    let mut count_query = sqlx::query(&count_sql);
+    let mut count_query = sqlx::query(AssertSqlSafe(count_sql));
     for val in &bind_values {
         count_query = match val {
             BindValue::Uuid(v) => count_query.bind(v),
@@ -366,7 +367,7 @@ pub async fn list_artifacts(
         where_clause, limit_param, offset_param
     );
 
-    let mut data_query = sqlx::query(&data_sql);
+    let mut data_query = sqlx::query(AssertSqlSafe(data_sql));
     for val in &bind_values {
         data_query = match val {
             BindValue::Uuid(v) => data_query.bind(v),
@@ -929,4 +930,28 @@ pub async fn generate_download_url(
         sha256: artifact_hash,
         expires_in_secs,
     }))
+}
+
+/// 产物路径白名单校验。
+///
+/// 允许：`http(s)://`、`s3://`、`minio://`、本地绝对/相对路径（不含 `..`）。
+/// 此前任意字符串（包括 `../../etc/passwd` 或带换行的内容）原样入库，
+/// 下载侧 `resolve_path` 拼接后即是任意文件读取隐患。
+pub(crate) fn validate_artifact_path(path: &str) -> Result<()> {
+    if path.is_empty() || path.len() > 1000 {
+        return Err(AppError::validation(
+            "artifact_path must be 1-1000 characters",
+        ));
+    }
+    for prefix in ["http://", "https://", "s3://", "minio://"] {
+        if path.starts_with(prefix) {
+            return Ok(());
+        }
+    }
+    if path.split('/').any(|component| component == "..") || path.contains('\\') || path.contains('\n') {
+        return Err(AppError::validation(
+            "artifact_path must not contain path traversal components",
+        ));
+    }
+    Ok(())
 }

@@ -18,6 +18,18 @@ use std::time::{Duration, Instant};
 
 use crate::error::AppError;
 
+/// 常数时间字节比较
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Nonce 防重放存储
 ///
 /// 记录最近使用的 nonce 以检测重放攻击
@@ -39,7 +51,8 @@ impl NonceStore {
         let now = Instant::now();
 
         // 先清理过期条目
-        self.entries.retain(|_, v| now.duration_since(*v) < self.ttl);
+        self.entries
+            .retain(|_, v| now.duration_since(*v) < self.ttl);
 
         // 检查是否已存在
         if self.entries.contains_key(nonce) {
@@ -90,7 +103,7 @@ pub fn compute_hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
     };
 
     // Step 2: 用 0 填充到 block size
-    let mut key_padded = vec![0u8; BLOCK_SIZE];
+    let mut key_padded = [0u8; BLOCK_SIZE];
     key_padded[..key_material.len()].copy_from_slice(&key_material);
 
     // Step 3: 创建 inner key (key ⊕ 0x36) 和 outer key (key ⊕ 0x5c)
@@ -104,15 +117,15 @@ pub fn compute_hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
     // Step 4: inner hash = SHA256(key⊕ipad || message)
     let inner_hash = {
         let mut hasher = Sha256::new();
-        hasher.update(&inner_key);
+        hasher.update(inner_key);
         hasher.update(message);
         hasher.finalize()
     };
 
     // Step 5: final hash = SHA256(key⊕opad || inner_hash)
     let mut hasher = Sha256::new();
-    hasher.update(&outer_key);
-    hasher.update(&inner_hash);
+    hasher.update(outer_key);
+    hasher.update(inner_hash);
     hasher.finalize().to_vec()
 }
 
@@ -168,18 +181,22 @@ pub async fn build_webhook_hmac_middleware(
         .ok_or_else(|| AppError::authentication("Missing x-runner-signature header"))?
         .to_string();
 
+    // nonce 必填：可选 nonce 等于允许客户端剥掉该头绕过防重放
+    // （截获一条合法签名请求后即可在时间窗口内无限重放）
     let nonce = headers
         .get("x-runner-nonce")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .filter(|v| !v.is_empty() && v.len() <= 256)
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::authentication("Missing x-runner-nonce header"))?;
 
     // 校验时间戳偏差
-    let timestamp: i64 = timestamp_str.parse().map_err(|_| {
-        AppError::authentication("Invalid x-runner-timestamp format")
-    })?;
+    let timestamp: i64 = timestamp_str
+        .parse()
+        .map_err(|_| AppError::authentication("Invalid x-runner-timestamp format"))?;
 
     let now = chrono::Utc::now().timestamp();
-    let skew = (now - timestamp).abs() as u64;
+    let skew = (now - timestamp).unsigned_abs();
     if skew > max_skew {
         tracing::warn!(
             runner_id = %runner_id,
@@ -191,26 +208,19 @@ pub async fn build_webhook_hmac_middleware(
         return Err(AppError::authentication("Request timestamp too old or too far in the future"));
     }
 
-    // 防重放: 检查 nonce
-    if let Some(ref n) = nonce {
-        let nonce_store = state
-            .webhook_nonce_store
-            .as_ref()
-            .ok_or_else(|| AppError::internal_error("Nonce store not initialized"))?;
+    // 防重放: 检查 nonce（必填）
+    let nonce_store = state
+        .webhook_nonce_store
+        .as_ref()
+        .ok_or_else(|| AppError::internal_error("Nonce store not initialized"))?;
 
-        if !nonce_store.check_and_record(n) {
-            tracing::warn!(
-                runner_id = %runner_id,
-                nonce = %n,
-                "Duplicate webhook nonce detected"
-            );
-            return Err(AppError::authentication("Duplicate or replayed webhook request"));
-        }
-    } else {
-        tracing::debug!(
+    if !nonce_store.check_and_record(&nonce) {
+        tracing::warn!(
             runner_id = %runner_id,
-            "Webhook request without nonce"
+            nonce = %nonce,
+            "Duplicate webhook nonce detected"
         );
+        return Err(AppError::authentication("Duplicate or replayed webhook request"));
     }
 
     // 计算请求体的 SHA256（body_bytes 已在上方读取）
@@ -225,13 +235,14 @@ pub async fn build_webhook_hmac_middleware(
         &timestamp_str,
         &body_sha256,
         &runner_id,
-        nonce.as_deref().unwrap_or(""),
+        &nonce,
     );
 
     let expected_signature =
         compute_hmac_signature_hex(hmac_secret.as_bytes(), canonical.as_bytes());
 
-    if signature != expected_signature {
+    // 常数时间比较，避免逐字节短路造成的时序侧信道
+    if !constant_time_eq(signature.as_bytes(), expected_signature.as_bytes()) {
         tracing::warn!(
             runner_id = %runner_id,
             "Invalid webhook HMAC signature"
@@ -269,11 +280,10 @@ pub async fn cleanup_nonce_store_loop(store: Arc<NonceStore>, interval_secs: u64
     loop {
         tokio::time::sleep(duration).await;
         let now = Instant::now();
-        store.entries.retain(|_, v| now.duration_since(*v) < store.ttl);
-        tracing::debug!(
-            remaining_nonces = store.entries.len(),
-            "Nonce store cleanup completed"
-        );
+        store
+            .entries
+            .retain(|_, v| now.duration_since(*v) < store.ttl);
+        tracing::debug!(remaining_nonces = store.entries.len(), "Nonce store cleanup completed");
     }
 }
 
@@ -341,9 +351,6 @@ mod tests {
         let key = vec![0x0bu8; 20];
         let data = b"Hi There";
         let sig = compute_hmac_signature_hex(&key, data);
-        assert_eq!(
-            sig,
-            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
-        );
+        assert_eq!(sig, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
     }
 }

@@ -1,7 +1,7 @@
 //! 作业服务层
 //! P2 阶段：提供作业的创建、查询、取消、重试等功能
 
-use sqlx::{Pool, Postgres};
+use sqlx::{AssertSqlSafe, Pool, Postgres};
 use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
@@ -13,8 +13,9 @@ use crate::models::asset::Host;
 use crate::models::job::*;
 use crate::output::OutputArchive;
 use crate::realtime::EventBus;
-use crate::services::audit_service::{AuditAction, AuditService};
 use crate::services::ApprovalService;
+use crate::services::audit_service::{AuditAction, AuditService};
+use crate::repository::escape_like;
 use crate::ssh::{HostKeyVerification, SSHClient, SshAuth, SshConfig};
 use secrecy::ExposeSecret;
 
@@ -68,14 +69,14 @@ impl JobService {
         info!(name = %request.name, "Creating command job");
 
         // 检查幂等键
-        if let Some(key) = &request.idempotency_key {
-            if let Some(existing) = self.get_by_idempotency_key(key).await? {
-                info!(
-                    job_id = %existing.id,
-                    "Found existing job with same idempotency key"
-                );
-                return Ok(existing);
-            }
+        if let Some(key) = &request.idempotency_key
+            && let Some(existing) = self.get_by_idempotency_key(key).await?
+        {
+            info!(
+                job_id = %existing.id,
+                "Found existing job with same idempotency key"
+            );
+            return Ok(existing);
         }
 
         // 验证目标主机
@@ -175,19 +176,21 @@ impl JobService {
         info!(job_id = %job_id, "Command job created successfully");
 
         // 审批检查：如果需要审批，将作业状态设为 awaiting_approval
-        if let Some(ref approval_svc) = self.approval_service {
-            if approval_svc.check_job_requires_approval(&job, &target_hosts).await? {
-                info!(job_id = %job_id, "Job requires approval, setting status to awaiting_approval");
-                sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
-                    .bind(job_id)
-                    .execute(&self.db)
-                    .await
-                    .map_err(|e| {
-                        error!(error = %e, "Failed to update job status");
-                        AppError::database("Failed to update job status")
-                    })?;
-                return Ok(job);
-            }
+        if let Some(ref approval_svc) = self.approval_service
+            && approval_svc
+                .check_job_requires_approval(&job, &target_hosts)
+                .await?
+        {
+            info!(job_id = %job_id, "Job requires approval, setting status to awaiting_approval");
+            sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
+                .bind(job_id)
+                .execute(&self.db)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to update job status");
+                    AppError::database("Failed to update job status")
+                })?;
+            return Ok(job);
         }
 
         // 异步启动作业执行
@@ -224,14 +227,14 @@ impl JobService {
         info!(name = %request.name, "Creating script job");
 
         // 检查幂等键
-        if let Some(key) = &request.idempotency_key {
-            if let Some(existing) = self.get_by_idempotency_key(key).await? {
-                info!(
-                    job_id = %existing.id,
-                    "Found existing job with same idempotency key"
-                );
-                return Ok(existing);
-            }
+        if let Some(key) = &request.idempotency_key
+            && let Some(existing) = self.get_by_idempotency_key(key).await?
+        {
+            info!(
+                job_id = %existing.id,
+                "Found existing job with same idempotency key"
+            );
+            return Ok(existing);
         }
 
         // 验证目标主机
@@ -332,19 +335,21 @@ impl JobService {
         info!(job_id = %job_id, "Script job created successfully");
 
         // 审批检查：如果需要审批，将作业状态设为 awaiting_approval
-        if let Some(ref approval_svc) = self.approval_service {
-            if approval_svc.check_job_requires_approval(&job, &target_hosts).await? {
-                info!(job_id = %job_id, "Script job requires approval, setting status to awaiting_approval");
-                sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
-                    .bind(job_id)
-                    .execute(&self.db)
-                    .await
-                    .map_err(|e| {
-                        error!(error = %e, "Failed to update job status");
-                        AppError::database("Failed to update job status")
-                    })?;
-                return Ok(job);
-            }
+        if let Some(ref approval_svc) = self.approval_service
+            && approval_svc
+                .check_job_requires_approval(&job, &target_hosts)
+                .await?
+        {
+            info!(job_id = %job_id, "Script job requires approval, setting status to awaiting_approval");
+            sqlx::query("UPDATE jobs SET status = 'awaiting_approval' WHERE id = $1")
+                .bind(job_id)
+                .execute(&self.db)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to update job status");
+                    AppError::database("Failed to update job status")
+                })?;
+            return Ok(job);
         }
 
         // 异步启动作业执行
@@ -409,7 +414,10 @@ impl JobService {
         if filters.search.is_some() {
             count += 1;
             query
-                .push_str(&format!(" AND (name ILIKE ${} OR description ILIKE ${})", count, count));
+                .push_str(&format!(
+                    " AND (name ILIKE ${} ESCAPE '\\' OR description ILIKE ${} ESCAPE '\\')",
+                    count, count
+                ));
         }
         if filters.date_from.is_some() {
             count += 1;
@@ -423,9 +431,13 @@ impl JobService {
         query.push_str(" ORDER BY created_at DESC LIMIT 100");
 
         // Prepare search pattern outside of bind to avoid lifetime issues
-        let search_pattern = filters.search.as_ref().map(|s| format!("%{}%", s));
+        // 转义 LIKE 通配符，防止 %/_ 被用户输入注入
+        let search_pattern = filters
+            .search
+            .as_ref()
+            .map(|s| format!("%{}%", escape_like(s)));
 
-        let mut q = sqlx::query_as::<_, Job>(&query);
+        let mut q = sqlx::query_as::<_, Job>(AssertSqlSafe(query));
 
         if let Some(job_type) = filters.job_type {
             q = q.bind(job_type);
@@ -512,7 +524,7 @@ impl JobService {
 
         // 查询目标主机的 group 和 environment
         let hosts =
-            sqlx::query_as::<_, Host>("SELECT group_id, environment FROM hosts WHERE id = ANY($1)")
+            sqlx::query_as::<_, Host>("SELECT group_id, environment FROM assets_hosts WHERE id = ANY($1)")
                 .bind(&target_host_ids)
                 .fetch_all(&self.db)
                 .await
@@ -556,7 +568,7 @@ impl JobService {
         // 为每个任务获取主机信息
         let mut responses = Vec::new();
         for task in tasks {
-            let host = sqlx::query_as::<_, Host>("SELECT * FROM hosts WHERE id = $1")
+            let host = sqlx::query_as::<_, Host>("SELECT * FROM assets_hosts WHERE id = $1")
                 .bind(task.host_id)
                 .fetch_one(&self.db)
                 .await
@@ -599,7 +611,7 @@ impl JobService {
         // 为每个任务获取主机信息并构建摘要
         let mut summaries = Vec::new();
         for task in tasks {
-            let host = sqlx::query_as::<_, Host>("SELECT * FROM hosts WHERE id = $1")
+            let host = sqlx::query_as::<_, Host>("SELECT * FROM assets_hosts WHERE id = $1")
                 .bind(task.host_id)
                 .fetch_one(&self.db)
                 .await
@@ -684,7 +696,7 @@ impl JobService {
                 AuditAction::JobCancel,
                 Some("job"),
                 Some(job_id),
-                Some("Command failed"),
+                Some("Job cancelled by user"),
                 None,
             )
             .await?;
@@ -799,7 +811,7 @@ impl JobService {
                 AuditAction::JobRetry,
                 Some("job"),
                 Some(job_id),
-                Some("Command failed"),
+                Some("Job retry scheduled"),
                 None,
             )
             .await?;
@@ -955,7 +967,7 @@ impl JobService {
         // 获取直接指定的主机
         if !host_ids.is_empty() {
             let direct_hosts = sqlx::query_as::<_, Host>(
-                "SELECT * FROM hosts WHERE id = ANY($1) AND status = 'active'",
+                "SELECT * FROM assets_hosts WHERE id = ANY($1) AND status = 'active'",
             )
             .bind(host_ids)
             .fetch_all(&self.db)
@@ -970,7 +982,7 @@ impl JobService {
         // 获取分组中的主机
         if !group_ids.is_empty() {
             let group_hosts = sqlx::query_as::<_, Host>(
-                "SELECT DISTINCT h.* FROM hosts h JOIN asset_groups ag ON h.group_id = ag.id WHERE ag.id = ANY($1) AND h.status = 'active'"
+                "SELECT DISTINCT h.* FROM assets_hosts h JOIN assets_groups ag ON h.group_id = ag.id WHERE ag.id = ANY($1) AND h.status = 'active'"
             )
             .bind(group_ids)
             .fetch_all(&self.db)
@@ -1000,15 +1012,28 @@ impl JobService {
     ) -> Result<()> {
         info!(job_id = %job_id, "Starting job execution");
 
-        // 更新作业状态为running
-        sqlx::query("UPDATE jobs SET status = 'running', started_at = NOW() WHERE id = $1")
-            .bind(job_id)
-            .execute(&db)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to update job status to running");
-                AppError::database("Failed to update job status")
-            })?;
+        // 更新作业状态为running。
+        // 带 status='pending' 守卫：与 cancel 并发时（cancel 已把作业置为
+        // cancelled）不得复活执行——旧实现无条件覆盖，取消后任务照跑并
+        // 把终态写回。
+        let started = sqlx::query(
+            "UPDATE jobs SET status = 'running', started_at = NOW() WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(job_id)
+        .execute(&db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to update job status to running");
+            AppError::database("Failed to update job status")
+        })?;
+
+        if started.rows_affected() == 0 {
+            info!(
+                job_id = %job_id,
+                "Job is no longer pending (cancelled or already running), skipping execution"
+            );
+            return Ok(());
+        }
 
         // 发布作业状态变更事件：pending -> running
         let _ = event_bus.publish(crate::realtime::RealtimeEvent::JobStatusChanged {
@@ -1078,29 +1103,58 @@ impl JobService {
         }
 
         // 等待所有任务完成
-        let mut succeeded = 0;
-        let mut failed = 0;
-        let timeout = 0;
-
         for handle in task_handles {
             match handle.await {
-                Ok(Ok(())) => succeeded += 1,
-                Ok(Err(_)) => failed += 1,
-                Err(_) => failed += 1,
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {}
+                Err(_) => {}
             }
         }
 
-        // 更新作业状态
+        // 以 DB 中的真实任务状态汇总。
+        // 旧实现只统计 spawn 结果（Ok/Err），超时任务返回 Ok 被计成成功、
+        // timeout_tasks 恒为 0，"全员超时"的作业最终状态是 Completed。
+        let status_rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status::text, COUNT(*) FROM tasks WHERE job_id = $1 GROUP BY status",
+        )
+        .bind(job_id)
+        .fetch_all(&db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to aggregate task statuses");
+            AppError::database("Failed to aggregate task statuses")
+        })?;
+
+        let mut succeeded: i32 = 0;
+        let mut failed: i32 = 0;
+        let mut timeout: i32 = 0;
+        let mut cancelled: i32 = 0;
+        for (task_status, count) in status_rows {
+            let count = count as i32;
+            match task_status.as_str() {
+                "succeeded" => succeeded += count,
+                "failed" => failed += count,
+                "timeout" => timeout += count,
+                "cancelled" => cancelled += count,
+                _ => {} // pending/running（被取消时尚未执行的任务）
+            }
+        }
+
+        // 更新作业状态。
+        // AND status='running' 守卫：执行期间用户取消作业时不得覆盖终态。
         let (status, succeeded_tasks, failed_tasks, timeout_tasks) =
             Self::calculate_job_status(succeeded, failed, timeout, job.total_tasks);
 
-        sqlx::query(
-            "UPDATE jobs SET status = $1, succeeded_tasks = $2, failed_tasks = $3, timeout_tasks = $4, completed_at = NOW() WHERE id = $5"
+        let updated = sqlx::query(
+            "UPDATE jobs SET status = $1, succeeded_tasks = $2, failed_tasks = $3, \
+             timeout_tasks = $4, cancelled_tasks = $5, completed_at = NOW() \
+             WHERE id = $6 AND status = 'running'",
         )
         .bind(&status)
         .bind(succeeded_tasks)
         .bind(failed_tasks)
         .bind(timeout_tasks)
+        .bind(cancelled)
         .bind(job_id)
         .execute(&db)
         .await
@@ -1108,6 +1162,14 @@ impl JobService {
             error!(error = %e, "Failed to update job final status");
             AppError::database("Failed to update job status")
         })?;
+
+        if updated.rows_affected() == 0 {
+            info!(
+                job_id = %job_id,
+                "Job was cancelled during execution, keeping cancelled status"
+            );
+            return Ok(());
+        }
 
         // 发布作业状态变更事件：running -> final status
         let _ = event_bus.publish(crate::realtime::RealtimeEvent::JobStatusChanged {
@@ -1163,7 +1225,7 @@ impl JobService {
         });
 
         // 获取主机信息
-        let host = sqlx::query_as::<_, Host>("SELECT * FROM hosts WHERE id = $1")
+        let host = sqlx::query_as::<_, Host>("SELECT * FROM assets_hosts WHERE id = $1")
             .bind(task.host_id)
             .fetch_one(&db)
             .await
@@ -1286,6 +1348,27 @@ impl JobService {
                 });
         });
 
+        // 主机密钥 TOFU 持久化：Accept 模式下首次连接接受的新密钥落盘到
+        // 主机记录（此前接受后不保存，下次连接照样接受新密钥，
+        // TOFU 没有任何约束力）。落库失败只告警，不影响执行结果。
+        if let Some((host_key, fingerprint)) = client.take_accepted_host_key() {
+            let mut known_hosts = serde_json::Map::new();
+            known_hosts.insert(host_key, serde_json::Value::String(fingerprint));
+            if let Err(e) = sqlx::query(
+                "UPDATE assets_hosts
+                 SET known_hosts = COALESCE(known_hosts, '{}'::jsonb) || $2::jsonb,
+                     updated_at = NOW()
+                 WHERE id = $1",
+            )
+            .bind(host.id)
+            .bind(serde_json::Value::Object(known_hosts))
+            .execute(&db)
+            .await
+            {
+                warn!(error = %e, host_id = %host.id, "Failed to persist accepted host key");
+            }
+        }
+
         // 根据作业类型执行不同的命令
         let result = match job.job_type {
             JobType::Command => {
@@ -1343,8 +1426,9 @@ impl JobService {
                 // 脱敏并生成摘要和明细
                 let (output_summary, output_detail) = output_archive.process_output(&full_output);
 
+                // AND status='running'：执行期间被 cancel 的任务不得被覆盖回终态
                 sqlx::query(
-                    "UPDATE tasks SET status = $1, exit_code = $2, output_summary = $3, output_detail = $4, failure_reason = $5, failure_message = $6, completed_at = NOW(), duration_secs = $7 WHERE id = $8"
+                    "UPDATE tasks SET status = $1, exit_code = $2, output_summary = $3, output_detail = $4, failure_reason = $5, failure_message = $6, completed_at = NOW(), duration_secs = $7 WHERE id = $8 AND status = 'running'"
                 )
                 .bind(&status)
                 .bind(exec_result.exit_code)
@@ -1385,7 +1469,7 @@ impl JobService {
                 // 根据错误类型分类失败原因
                 let failure_reason = e.to_ssh_failure_reason();
                 sqlx::query(
-                    "UPDATE tasks SET status = 'failed', failure_reason = $1, failure_message = $2, completed_at = NOW() WHERE id = $3"
+                    "UPDATE tasks SET status = 'failed', failure_reason = $1, failure_message = $2, completed_at = NOW() WHERE id = $3 AND status = 'running'"
                 )
                 .bind(&failure_reason)
                 .bind(e.to_string())
@@ -1596,7 +1680,7 @@ impl JobService {
             count + 1
         );
 
-        let mut q = sqlx::query_as::<_, crate::models::approval::JobTemplate>(&query);
+        let mut q = sqlx::query_as::<_, crate::models::approval::JobTemplate>(AssertSqlSafe(query));
 
         if let Some(name) = request.name {
             q = q.bind(name);

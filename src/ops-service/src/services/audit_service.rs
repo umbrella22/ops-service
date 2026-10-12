@@ -174,8 +174,13 @@ impl AuditService {
             changes_summary: params.changes_summary.map(|s| s.to_string()),
             source_ip: params.source_ip.map(|s| s.to_string()),
             user_agent: params.user_agent.map(|s| s.to_string()),
-            trace_id: params.trace_id.map(|s| s.to_string()),
-            request_id: None, // 可以从请求上下文中提取
+            trace_id: params
+                .trace_id
+                .map(|s| s.to_string())
+                .or_else(crate::middleware::current_trace_id),
+            // 从请求作用域自动关联 request_id（此前恒为 None，
+            // 审计无法与请求日志关联）
+            request_id: crate::middleware::current_request_id(),
             result: params.result.to_string(),
             error_message: params.error_message.map(|s| s.to_string()),
             occurred_at: chrono::Utc::now(),

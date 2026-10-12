@@ -5,15 +5,12 @@
 //! 不再在此处重复创建服务实例，确保单例语义与状态来源单一。
 
 use axum::{
-    routing::{delete, get, post, put},
     Router,
+    routing::{delete, get, post, put},
 };
 use std::sync::Arc;
 
-use crate::{
-    handlers,
-    middleware::AppState,
-};
+use crate::{handlers, middleware::AppState};
 
 use crate::middleware::runner_auth_middleware;
 
@@ -23,50 +20,37 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // 公开端点（健康检查）
     let public_routes = Router::new()
         .route("/health", get(handlers::health::health_check))
-        .route("/ready", get(handlers::health::readiness_check))
-        .route("/api/v1/system/concurrency", get(handlers::health::get_concurrency_status));
+        .route("/ready", get(handlers::health::readiness_check));
 
     // Runner Webhook 路由（使用 Runner API Key 鉴权）
     let runner_routes = Router::new()
-        .route(
-            "/api/v1/runners/register",
-            post(handlers::runner::register_runner)
-        )
-        .route(
-            "/api/v1/webhooks/runner/register",
-            post(handlers::runner::register_runner)
-        )
-        .route(
-            "/api/v1/runners/heartbeat",
-            post(handlers::runner::runner_heartbeat)
-        )
-        .route(
-            "/api/v1/webhooks/runner/heartbeat",
-            post(handlers::runner::runner_heartbeat)
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            runner_auth_middleware,
-        ));
+        .route("/api/v1/runners/register", post(handlers::runner::register_runner))
+        .route("/api/v1/webhooks/runner/register", post(handlers::runner::register_runner))
+        .route("/api/v1/runners/heartbeat", post(handlers::runner::runner_heartbeat))
+        .route("/api/v1/webhooks/runner/heartbeat", post(handlers::runner::runner_heartbeat))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), runner_auth_middleware));
 
     // 构建 Webhook 路由（使用 HMAC 签名鉴权）
     let webhook_routes = Router::new()
         .route(
             "/api/v1/webhooks/build/status",
-            post(handlers::build_webhook::build_status_webhook)
+            post(handlers::build_webhook::build_status_webhook),
         )
-        .route(
-            "/api/v1/webhooks/build/log",
-            post(handlers::build_webhook::build_log_webhook)
-        )
+        .route("/api/v1/webhooks/build/log", post(handlers::build_webhook::build_log_webhook))
         .route(
             "/api/v1/webhooks/build/artifact",
-            post(handlers::build_webhook::build_artifact_webhook)
+            post(handlers::build_webhook::build_artifact_webhook),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::webhook_hmac::build_webhook_hmac_middleware,
         ));
+
+    // Git push webhook（公开路由：完全依赖签名验证，无 JWT）
+    let git_webhook_routes = Router::new().route(
+        "/api/v1/webhooks/git/{trigger_id}",
+        post(handlers::build_trigger::git_push_webhook),
+    );
 
     // 认证路由（无需认证，但应用速率限制）
     let auth_routes = Router::new()
@@ -75,6 +59,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     // 需要认证的路由
     let authenticated_routes = Router::new()
+        // 系统内部状态（此前公开暴露并发统计）
+        .route("/api/v1/system/concurrency", get(handlers::health::get_concurrency_status))
         // 当前用户信息
         .route("/api/v1/auth/me", get(handlers::auth::get_current_user))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
@@ -267,6 +253,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/builds/{id}/steps",
             get(handlers::build::get_build_steps)
         )
+        .route(
+            "/api/v1/stream/builds/{id}",
+            get(handlers::build::subscribe_build_events)
+        )
 
         // Runner 管理 (P2.1)
         .route(
@@ -295,6 +285,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/runner-docker-configs/{id}/history",
             get(handlers::runner_config::get_config_history)
+        )
+
+        // 构建触发器 (P4: Git push 自动触发)
+        .route(
+            "/api/v1/build-triggers",
+            get(handlers::build_trigger::list_triggers)
+                .post(handlers::build_trigger::create_trigger)
+        )
+        .route(
+            "/api/v1/build-triggers/{id}",
+            put(handlers::build_trigger::update_trigger)
+                .delete(handlers::build_trigger::delete_trigger)
         )
 
         // 构建产物 (P2.1)
@@ -350,6 +352,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(public_routes)
         .merge(runner_routes)
         .merge(webhook_routes)
+        .merge(git_webhook_routes)
         .merge(auth_routes)
         .merge(authenticated_routes)
         .merge(metrics_routes)

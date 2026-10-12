@@ -15,6 +15,7 @@ use ops_service::repository::audit_repo::AuditRepository;
 use ops_service::repository::role_repo::RoleRepository;
 use ops_service::repository::user_repo::UserRepository;
 use secrecy::{ExposeSecret, SecretString};
+use serial_test::serial;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -43,7 +44,9 @@ fn create_test_config() -> AppConfig {
             format: "pretty".to_string(),
         },
         security: SecurityConfig {
-            jwt_secret: SecretString::from("test-secret-key-for-testing-only-min-32-chars".to_string()),
+            jwt_secret: SecretString::from(
+                "test-secret-key-for-testing-only-min-32-chars".to_string(),
+            ),
             access_token_exp_secs: 300,
             refresh_token_exp_secs: 3600,
             password_min_length: 8,
@@ -61,6 +64,7 @@ fn create_test_config() -> AppConfig {
             runner_webhook_nonce_ttl_secs: 600,
             login_rate_limit_max_attempts: 10,
             login_rate_limit_window_secs: 300,
+                credential_encryption_key: None,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -92,6 +96,7 @@ fn create_test_config() -> AppConfig {
         },
         runner_docker: RunnerDockerConfig::default(),
         metrics: MetricsConfig::default(),
+        notifications: Default::default(),
     }
 }
 
@@ -99,12 +104,12 @@ fn create_test_config() -> AppConfig {
 async fn setup_test_db() -> PgPool {
     let config = create_test_config();
 
-    let pool = sqlx::PgPool::connect(&config.database.url.expose_secret())
+    let pool = sqlx::PgPool::connect(config.database.url.expose_secret())
         .await
         .expect("Failed to connect to test database");
 
     // 运行迁移
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         -- 创建用户表
         CREATE TABLE IF NOT EXISTS users (
@@ -236,13 +241,31 @@ async fn setup_test_db() -> PgPool {
         .await
         .ok();
 
+    // 自举管理员（created_by 为 NULL，与种子迁移一致），
+    // 其固定 ID 供各测试作为 created_by 使用，满足 users 表自引用外键
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, username, email, password_hash, status)
+        VALUES ($1, 'bootstrap-admin', 'bootstrap@test.local', 'unused-hash', 'enabled')
+        ON CONFLICT (id) DO NOTHING
+    "#,
+    )
+    .bind(BOOTSTRAP_ADMIN_ID)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert bootstrap admin");
+
     pool
 }
+
+/// 测试用自举管理员 ID（见 setup_test_db）
+const BOOTSTRAP_ADMIN_ID: Uuid = Uuid::nil();
 
 // ==================== UserRepository 测试 ====================
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_user_repository_create_and_find() {
     let pool = setup_test_db().await;
     let repo = UserRepository::new(pool.clone());
@@ -258,7 +281,7 @@ async fn test_user_repository_create_and_find() {
     };
 
     let user = repo
-        .create(&req, &password_hash, Uuid::new_v4())
+        .create(&req, &password_hash, BOOTSTRAP_ADMIN_ID)
         .await
         .expect("User creation should succeed");
 
@@ -282,6 +305,7 @@ async fn test_user_repository_create_and_find() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_user_repository_update() {
     let pool = setup_test_db().await;
     let repo = UserRepository::new(pool.clone());
@@ -297,7 +321,7 @@ async fn test_user_repository_update() {
     };
 
     let user = repo
-        .create(&req, &password_hash, Uuid::new_v4())
+        .create(&req, &password_hash, BOOTSTRAP_ADMIN_ID)
         .await
         .unwrap();
 
@@ -318,6 +342,7 @@ async fn test_user_repository_update() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_user_repository_delete() {
     let pool = setup_test_db().await;
     let repo = UserRepository::new(pool.clone());
@@ -333,7 +358,7 @@ async fn test_user_repository_delete() {
     };
 
     let user = repo
-        .create(&req, &password_hash, Uuid::new_v4())
+        .create(&req, &password_hash, BOOTSTRAP_ADMIN_ID)
         .await
         .unwrap();
 
@@ -346,6 +371,7 @@ async fn test_user_repository_delete() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_user_repository_failed_attempts() {
     let pool = setup_test_db().await;
     let repo = UserRepository::new(pool.clone());
@@ -361,7 +387,7 @@ async fn test_user_repository_failed_attempts() {
     };
 
     let user = repo
-        .create(&req, &password_hash, Uuid::new_v4())
+        .create(&req, &password_hash, BOOTSTRAP_ADMIN_ID)
         .await
         .unwrap();
 
@@ -382,6 +408,7 @@ async fn test_user_repository_failed_attempts() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_role_repository_create_and_find() {
     let pool = setup_test_db().await;
     let repo = RoleRepository::new(pool.clone());
@@ -403,6 +430,7 @@ async fn test_role_repository_create_and_find() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_role_repository_list() {
     let pool = setup_test_db().await;
     let repo = RoleRepository::new(pool.clone());
@@ -423,6 +451,7 @@ async fn test_role_repository_list() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_role_repository_assign_to_user() {
     let pool = setup_test_db().await;
     let role_repo = RoleRepository::new(pool.clone());
@@ -439,7 +468,7 @@ async fn test_role_repository_assign_to_user() {
         department: None,
     };
     let user = user_repo
-        .create(&user_req, &password_hash, Uuid::new_v4())
+        .create(&user_req, &password_hash, BOOTSTRAP_ADMIN_ID)
         .await
         .unwrap();
 
@@ -470,6 +499,7 @@ async fn test_role_repository_assign_to_user() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_asset_repository_create_group() {
     let pool = setup_test_db().await;
     let repo = AssetRepository::new(pool.clone());
@@ -477,14 +507,14 @@ async fn test_asset_repository_create_group() {
     let req = CreateGroupRequest {
         name: "web-servers".to_string(),
         description: Some("Web server group".to_string()),
-        environment: "production".to_string(),
+        environment: "prod".to_string(),
         parent_id: None,
     };
 
-    let group = repo.create_group(&req, Uuid::new_v4()).await.unwrap();
+    let group = repo.create_group(&req, BOOTSTRAP_ADMIN_ID).await.unwrap();
 
     assert_eq!(group.name, "web-servers");
-    assert_eq!(group.environment, "production");
+    assert_eq!(group.environment, "prod");
 
     // 查找组
     let found = repo.get_group(group.id).await.unwrap();
@@ -494,6 +524,7 @@ async fn test_asset_repository_create_group() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_asset_repository_create_host() {
     let pool = setup_test_db().await;
     let repo = AssetRepository::new(pool.clone());
@@ -505,7 +536,10 @@ async fn test_asset_repository_create_host() {
         environment: "dev".to_string(),
         parent_id: None,
     };
-    let group = repo.create_group(&group_req, Uuid::new_v4()).await.unwrap();
+    let group = repo
+        .create_group(&group_req, BOOTSTRAP_ADMIN_ID)
+        .await
+        .unwrap();
 
     // 创建主机
     let host_req = CreateHostRequest {
@@ -529,7 +563,10 @@ async fn test_asset_repository_create_host() {
         known_hosts: None,
     };
 
-    let host = repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
+    let host = repo
+        .create_host(&host_req, BOOTSTRAP_ADMIN_ID)
+        .await
+        .unwrap();
 
     assert_eq!(host.identifier, "host-01");
     assert_eq!(host.address, "192.168.1.100");
@@ -543,6 +580,7 @@ async fn test_asset_repository_create_host() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_asset_repository_list_hosts() {
     let pool = setup_test_db().await;
     let repo = AssetRepository::new(pool.clone());
@@ -551,10 +589,13 @@ async fn test_asset_repository_list_hosts() {
     let group_req = CreateGroupRequest {
         name: "list-test-group".to_string(),
         description: None,
-        environment: "test".to_string(),
+        environment: "dev".to_string(),
         parent_id: None,
     };
-    let group = repo.create_group(&group_req, Uuid::new_v4()).await.unwrap();
+    let group = repo
+        .create_group(&group_req, BOOTSTRAP_ADMIN_ID)
+        .await
+        .unwrap();
 
     // 创建多个主机
     for i in 1..=3 {
@@ -564,7 +605,7 @@ async fn test_asset_repository_list_hosts() {
             address: format!("192.168.1.{}", 100 + i),
             port: 22,
             group_id: group.id,
-            environment: "test".to_string(),
+            environment: "dev".to_string(),
             tags: vec![],
             owner_id: None,
             status: "active".to_string(),
@@ -578,16 +619,20 @@ async fn test_asset_repository_list_hosts() {
             host_key_verification: None,
             known_hosts: None,
         };
-        repo.create_host(&host_req, Uuid::new_v4()).await.unwrap();
+        repo.create_host(&host_req, BOOTSTRAP_ADMIN_ID)
+            .await
+            .unwrap();
     }
 
     // 列出主机
     let filters = HostListFilters {
         group_id: Some(group.id),
-        environment: Some("test".to_string()),
+        environment: Some("dev".to_string()),
         status: None,
         tags: None,
         search: None,
+        allowed_environments: None,
+        allowed_groups: None,
     };
 
     let hosts = repo.list_hosts(&filters, 10, 0).await.unwrap();
@@ -598,6 +643,7 @@ async fn test_asset_repository_list_hosts() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_audit_repository_insert_and_query() {
     use ops_service::models::audit::*;
 
@@ -645,6 +691,7 @@ async fn test_audit_repository_insert_and_query() {
 
 #[tokio::test]
 #[ignore = "需要数据库连接"]
+#[serial]
 async fn test_audit_repository_count() {
     use ops_service::models::audit::*;
 

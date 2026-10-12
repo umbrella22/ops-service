@@ -44,7 +44,9 @@ fn create_test_config() -> AppConfig {
             format: "pretty".to_string(),
         },
         security: SecurityConfig {
-            jwt_secret: SecretString::from("test-secret-key-for-testing-only-min-32-chars".to_string()),
+            jwt_secret: SecretString::from(
+                "test-secret-key-for-testing-only-min-32-chars".to_string(),
+            ),
             access_token_exp_secs: 300,
             refresh_token_exp_secs: 3600,
             password_min_length: 8,
@@ -62,6 +64,7 @@ fn create_test_config() -> AppConfig {
             runner_webhook_nonce_ttl_secs: 600,
             login_rate_limit_max_attempts: 10,
             login_rate_limit_window_secs: 300,
+            credential_encryption_key: None,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -93,6 +96,7 @@ fn create_test_config() -> AppConfig {
         },
         runner_docker: RunnerDockerConfig::default(),
         metrics: MetricsConfig::default(),
+        notifications: Default::default(),
     }
 }
 
@@ -102,6 +106,10 @@ async fn create_test_app_state() -> Arc<AppState> {
     let pool = db::create_pool(&config.database)
         .await
         .expect("Failed to create test database pool");
+
+    db::run_migrations(&pool)
+        .await
+        .expect("Failed to run migrations");
 
     let jwt_service = Arc::new(
         ops_service::auth::jwt::JwtService::from_config(&config)
@@ -168,6 +176,7 @@ async fn create_test_app_state() -> Arc<AppState> {
         storage_service,
         webhook_nonce_store: None,
         runner_config_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        notify_service: None,
     })
 }
 
@@ -241,7 +250,7 @@ async fn test_404_not_found() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     // 只验证 body 可能为空或者是某个错误格式
     let body_str = String::from_utf8(body.to_vec()).unwrap_or_default();
-    assert!(body_str.is_empty() || body_str.len() > 0);
+    assert!(body_str.is_empty() || !body_str.is_empty());
 }
 
 #[tokio::test]
@@ -475,7 +484,9 @@ async fn test_login_empty_credentials() {
     // 应该返回未授权
     assert!(
         response.status() == StatusCode::UNAUTHORIZED
-            || response.status() == StatusCode::BAD_REQUEST
+            || response.status() == StatusCode::BAD_REQUEST,
+        "unexpected status: {}",
+        response.status()
     );
 }
 

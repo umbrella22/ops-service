@@ -80,18 +80,17 @@ pub async fn optional_auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Response {
-    if let Ok(token) = extract_token(req.headers()) {
-        if let Ok(claims) = jwt_service.validate_access_token(&token) {
-            if let Ok(user_id) = Uuid::parse_str(&claims.sub) {
-                let auth_context = AuthContext {
-                    user_id,
-                    username: claims.username,
-                    roles: claims.roles,
-                    scopes: claims.scopes,
-                };
-                req.extensions_mut().insert(auth_context);
-            }
-        }
+    if let Ok(token) = extract_token(req.headers())
+        && let Ok(claims) = jwt_service.validate_access_token(&token)
+        && let Ok(user_id) = Uuid::parse_str(&claims.sub)
+    {
+        let auth_context = AuthContext {
+            user_id,
+            username: claims.username,
+            roles: claims.roles,
+            scopes: claims.scopes,
+        };
+        req.extensions_mut().insert(auth_context);
     }
 
     next.run(req).await

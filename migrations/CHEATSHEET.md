@@ -179,13 +179,10 @@ INSERT INTO assets_groups (name, description, environment)
 VALUES ('prod-servers', 'Production Servers', 'prod');
 
 -- 创建子资产组
+-- （SELECT 列表必须是列表达式，不能是行构造器）
 INSERT INTO assets_groups (name, description, environment, parent_id)
-SELECT (
-    'web-servers',
-    'Web Servers',
-    'prod',
-    id
-) FROM assets_groups WHERE name = 'prod-servers' AND environment = 'prod';
+SELECT 'web-servers', 'Web Servers', 'prod', id
+FROM assets_groups WHERE name = 'prod-servers' AND environment = 'prod';
 ```
 
 ### 创建主机
@@ -277,9 +274,14 @@ UPDATE assets_hosts
 SET tags = tags || '["loadbalancer"]'::JSONB
 WHERE identifier = 'web-01';
 
--- 移除标签
+-- 移除指定标签（集合返回函数不能直接用于 UPDATE SET，
+-- 需先过滤再重新聚合）
 UPDATE assets_hosts
-SET tags = jsonb_array_elements(text)
+SET tags = (
+    SELECT COALESCE(jsonb_agg(elem), '[]'::JSONB)
+    FROM JSONB_ARRAY_ELEMENTS_TEXT(tags) AS elem
+    WHERE elem <> 'loadbalancer'
+)
 WHERE identifier = 'web-01';
 ```
 

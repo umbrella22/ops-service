@@ -28,6 +28,11 @@ pub struct BuildTaskMessage {
     /// 发布目标（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_target: Option<PublishTarget>,
+
+    /// Pipeline-as-code：steps 为空时 Runner 从仓库读取该文件解析步骤
+    /// （缺省 .ops.yml）。Some("") 视为未指定。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_file: Option<String>,
 }
 
 /// 项目信息
@@ -62,6 +67,10 @@ pub struct BuildParameters {
     /// 构建参数
     #[serde(default)]
     pub parameters: HashMap<String, serde_json::Value>,
+
+    /// 整个任务的超时时间（秒）；None 表示使用 Runner 侧默认值
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 /// 构建步骤
@@ -280,6 +289,33 @@ pub struct BuildArtifact {
     pub version: String,
 }
 
+/// 构建取消消息（控制面 -> Runner）
+///
+/// 通过 build 交换机以 `build.cancel.<job_id>` 广播：所有 Runner 的任务
+/// 队列都绑定 `build.cancel.#`，收到后按 job_id 匹配本地活跃任务——
+/// 匹配则取消执行并回传 Cancelled 终态，不匹配则忽略。
+/// 广播（而非定向）使取消不依赖派发记录的 runner_name 仍然可靠。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildCancelMessage {
+    /// 构建作业 ID（Runner 按 job_id 匹配活跃任务）
+    pub job_id: Uuid,
+
+    /// 任务 ID（可选；创建任务时派发的 task_id，用于精确匹配）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<Uuid>,
+
+    /// 取消发起者（可选，审计用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<Uuid>,
+
+    /// 取消原因
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+
+    /// 时间戳
+    pub timestamp: DateTime<Utc>,
+}
+
 /// 构建日志消息（Runner -> 控制面）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildLogMessage {
@@ -491,6 +527,9 @@ impl RoutingKeys {
     /// 构建日志路由
     pub const BUILD_LOG: &'static str = "build.log";
 
+    /// 构建取消路由前缀（实际键为 build.cancel.<job_id>）
+    pub const BUILD_CANCEL: &'static str = "build.cancel";
+
     /// Runner 注册路由
     pub const RUNNER_REGISTER: &'static str = "runner.register";
 
@@ -584,6 +623,7 @@ mod tests {
         assert_eq!(RoutingKeys::BUILD_TASK, "build.task");
         assert_eq!(RoutingKeys::BUILD_STATUS, "build.status");
         assert_eq!(RoutingKeys::BUILD_LOG, "build.log");
+        assert_eq!(RoutingKeys::BUILD_CANCEL, "build.cancel");
         assert_eq!(RoutingKeys::RUNNER_REGISTER, "runner.register");
         assert_eq!(RoutingKeys::RUNNER_HEARTBEAT, "runner.heartbeat");
     }
@@ -598,6 +638,21 @@ mod tests {
     fn test_queue_types_constants() {
         assert_eq!(QueueTypes::DEAD_LETTER_SUFFIX, ".dlq");
         assert_eq!(QueueTypes::RETRY_SUFFIX, ".retry");
+    }
+
+    #[test]
+    fn test_build_cancel_message_roundtrip() {
+        let msg = BuildCancelMessage {
+            job_id: Uuid::new_v4(),
+            task_id: Some(Uuid::new_v4()),
+            requested_by: None,
+            reason: Some("user requested".to_string()),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: BuildCancelMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.job_id, msg.job_id);
+        assert_eq!(back.reason.as_deref(), Some("user requested"));
     }
 
     #[test]

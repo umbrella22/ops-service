@@ -3,7 +3,7 @@
 
 use crate::{config::AppConfig, error::AppError};
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -225,6 +225,7 @@ mod tests {
                 runner_webhook_nonce_ttl_secs: 600,
                 login_rate_limit_max_attempts: 10,
                 login_rate_limit_window_secs: 300,
+                credential_encryption_key: None,
             },
             ssh: crate::config::SshConfig {
                 default_username: "root".to_string(),
@@ -256,6 +257,7 @@ mod tests {
             },
             runner_docker: crate::config::RunnerDockerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            notifications: crate::config::NotifyConfig::default(),
         }
     }
 

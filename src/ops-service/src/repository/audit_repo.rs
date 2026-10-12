@@ -1,7 +1,7 @@
 //! Audit repository (审计数据访问)
 
 use crate::{error::AppError, models::audit::*};
-use sqlx::{PgPool, Row};
+use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
 pub struct AuditRepository {
@@ -99,7 +99,7 @@ impl AuditRepository {
             index + 2
         ));
 
-        let mut query_builder = sqlx::query_as::<_, AuditLog>(&query);
+        let mut query_builder = sqlx::query_as::<_, AuditLog>(AssertSqlSafe(query));
 
         if let Some(subject_id) = filters.subject_id {
             query_builder = query_builder.bind(subject_id);
@@ -173,7 +173,7 @@ impl AuditRepository {
             query.push_str(&format!(" AND trace_id = ${}", index));
         }
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query(AssertSqlSafe(query));
 
         if let Some(subject_id) = filters.subject_id {
             query_builder = query_builder.bind(subject_id);
@@ -237,7 +237,7 @@ impl AuditRepository {
 
         query.push_str(&format!(" ORDER BY occurred_at DESC LIMIT ${}", index + 1));
 
-        let mut query_builder = sqlx::query_as::<_, LoginEvent>(&query);
+        let mut query_builder = sqlx::query_as::<_, LoginEvent>(AssertSqlSafe(query));
 
         if let Some(user_id) = user_id {
             query_builder = query_builder.bind(user_id);

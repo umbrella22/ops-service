@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn test_generate_key_id() {
         let key = "ops_ak_abcdefghijklmnopqrstuvwxyz";
-        let key_id = ApiKeyGenerator::generate_key_id(&key);
+        let key_id = ApiKeyGenerator::generate_key_id(key);
         assert!(key_id.starts_with("ak_"));
         assert_eq!(key_id.len(), 11); // "ak_" (3 chars) + 8 chars
     }

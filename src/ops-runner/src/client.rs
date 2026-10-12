@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use reqwest::Client;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use sysinfo::System;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::watch;
@@ -24,9 +24,40 @@ pub struct ControlPlaneClient {
     docker_config: Arc<TokioMutex<Option<RunnerDockerConfig>>>,
     /// 当前正在执行的作业数（由 Worker 更新）
     current_jobs: Arc<AtomicUsize>,
-    /// 配置变更通知通道 (心跳 -> executor)
+    /// 配置变更通知通道 (心跳 -> 共享配置)
     config_update_tx: watch::Sender<Option<RunnerDockerConfig>>,
 }
+
+/// 控制面下发的 RabbitMQ 配置（注册响应）
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AdvertisedRabbitMqConfig {
+    /// 交换机名称
+    #[serde(default)]
+    pub exchange: Option<String>,
+
+    /// routing key 模式（如 build.{name}，{..} 为占位符）
+    #[serde(default)]
+    pub routing_key_pattern: Option<String>,
+
+    /// 完整队列名（如 runner.<name>.queue）
+    #[serde(default)]
+    pub queue_name: Option<String>,
+}
+
+/// 注册结果
+#[derive(Debug, Clone)]
+pub struct RegistrationOutcome {
+    /// Runner ID
+    pub runner_id: String,
+    /// 心跳间隔（秒），已钳制到 5..=300
+    pub heartbeat_interval_secs: u64,
+    /// 控制面下发的 RabbitMQ 配置（若提供，以其为准）
+    pub rabbitmq: Option<AdvertisedRabbitMqConfig>,
+}
+
+/// 心跳间隔的合法范围（秒）
+const HEARTBEAT_INTERVAL_MIN: i64 = 5;
+const HEARTBEAT_INTERVAL_MAX: i64 = 300;
 
 impl ControlPlaneClient {
     /// 创建新的客户端
@@ -46,11 +77,6 @@ impl ControlPlaneClient {
             current_jobs: Arc::new(AtomicUsize::new(0)),
             config_update_tx,
         }
-    }
-
-    /// 设置当前作业数（由 Worker 调用）
-    pub fn set_current_jobs(&self, count: usize) {
-        self.current_jobs.store(count, Ordering::Relaxed);
     }
 
     /// 获取配置变更通知接收端
@@ -76,7 +102,10 @@ impl ControlPlaneClient {
     }
 
     /// 注册 Runner
-    pub async fn register(&mut self) -> Result<String> {
+    ///
+    /// 返回 Runner ID、控制面建议的心跳间隔（钳制到 5..=300 秒）
+    /// 以及控制面下发的 RabbitMQ 配置。
+    pub async fn register(&mut self) -> Result<RegistrationOutcome> {
         info!("Registering runner with control plane");
 
         let mut sys = System::new_all();
@@ -115,20 +144,24 @@ impl ControlPlaneClient {
         #[derive(serde::Deserialize)]
         struct RegisterResponse {
             runner_id: String,
-            heartbeat_interval_secs: Option<u64>,
+            /// 心跳间隔（秒）
+            #[serde(default)]
+            heartbeat_interval_secs: Option<i64>,
             /// Docker 配置（如果控制面返回）
+            #[serde(default)]
             docker: Option<RunnerDockerConfig>,
+            /// RabbitMQ 配置（如果控制面返回，以其为准）
+            #[serde(default)]
+            rabbitmq: Option<AdvertisedRabbitMqConfig>,
         }
 
-        let resp: RegisterResponse = response
-            .json()
-            .await
-            .context("Failed to parse registration response")?;
-
-        // 如果控制面返回了不同的心跳间隔，更新配置
-        if let Some(interval) = resp.heartbeat_interval_secs {
-            debug!("Control plane suggested heartbeat interval: {}s", interval);
-        }
+        let resp: RegisterResponse = match response.json().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                warn!("Failed to parse registration response: {}", e);
+                return Err(e.into());
+            }
+        };
 
         // 存储控制面返回的 Docker 配置
         if let Some(docker_cfg) = resp.docker {
@@ -141,8 +174,29 @@ impl ControlPlaneClient {
 
         self.runner_id = Some(resp.runner_id.clone());
 
+        // 心跳间隔：优先使用控制面建议值，钳制到合法范围
+        let heartbeat_interval_secs = resp
+            .heartbeat_interval_secs
+            .unwrap_or(self.config.control_plane.heartbeat_interval_secs as i64)
+            .clamp(HEARTBEAT_INTERVAL_MIN, HEARTBEAT_INTERVAL_MAX) as u64;
+        if let Some(suggested) = resp.heartbeat_interval_secs {
+            info!("Control plane suggested heartbeat interval: {}s (using {}s)", suggested, heartbeat_interval_secs);
+        }
+
+        if let Some(rabbitmq) = &resp.rabbitmq {
+            info!(
+                "Received RabbitMQ configuration from control plane (queue: {:?})",
+                rabbitmq.queue_name
+            );
+        }
+
         info!("Runner registered successfully with ID: {}", resp.runner_id);
-        Ok(resp.runner_id)
+
+        Ok(RegistrationOutcome {
+            runner_id: resp.runner_id,
+            heartbeat_interval_secs,
+            rabbitmq: resp.rabbitmq,
+        })
     }
 
     /// 发送心跳
@@ -165,9 +219,20 @@ impl ControlPlaneClient {
 
         let available_memory_mb = available_memory / 1024;
 
-        // 简化磁盘使用率（默认值）
-        let disk_usage = 50.0;
-        let available_disk_gb = 10.0;
+        // 磁盘使用率：复用 sysinfo（已在依赖树中）采集，汇总所有挂载点
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let (total_space, available_space) = disks
+            .list()
+            .iter()
+            .fold((0u64, 0u64), |(total, avail), disk| {
+                (total + disk.total_space(), avail + disk.available_space())
+            });
+        let disk_usage = if total_space > 0 {
+            ((total_space - available_space) as f32 / total_space as f32) * 100.0
+        } else {
+            0.0
+        };
+        let available_disk_gb = available_space as f64 / (1024.0 * 1024.0 * 1024.0);
 
         let system_info = SystemInfo {
             cpu_usage_percent: cpu_usage,
@@ -211,15 +276,20 @@ impl ControlPlaneClient {
         }
 
         let mut config_updated = false;
-        if let Ok(resp) = response.json::<HeartbeatResponse>().await {
-            // 应用 Docker 配置更新
-            if let Some(docker_cfg) = resp.docker {
-                info!(
-                    "Received Docker config update from heartbeat (enabled: {})",
-                    docker_cfg.enabled
-                );
-                self.set_docker_config(docker_cfg).await;
-                config_updated = true;
+        match response.json::<HeartbeatResponse>().await {
+            Ok(resp) => {
+                // 应用 Docker 配置更新
+                if let Some(docker_cfg) = resp.docker {
+                    info!(
+                        "Received Docker config update from heartbeat (enabled: {})",
+                        docker_cfg.enabled
+                    );
+                    self.set_docker_config(docker_cfg).await;
+                    config_updated = true;
+                }
+            }
+            Err(e) => {
+                warn!("Failed to parse heartbeat response: {}", e);
             }
         }
 
@@ -279,6 +349,8 @@ mod tests {
                 exchange: "ops.build".to_string(),
                 queue_prefix: "test-runner".to_string(),
                 prefetch: 1,
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: crate::config::ExecutionConfig {
                 workspace_base_dir: "/tmp/test-workspace".to_string(),
@@ -288,6 +360,7 @@ mod tests {
                 cache_dir: None,
                 docker: None,
             },
+            artifact_storage: crate::config::ArtifactStorageConfig::default(),
         };
 
         let client = ControlPlaneClient::new(config);
@@ -317,6 +390,8 @@ mod tests {
                 exchange: "ops.test".to_string(),
                 queue_prefix: "test".to_string(),
                 prefetch: 5,
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: crate::config::ExecutionConfig {
                 workspace_base_dir: "/workspace".to_string(),
@@ -326,6 +401,7 @@ mod tests {
                 cache_dir: Some("/cache".to_string()),
                 docker: None,
             },
+            artifact_storage: crate::config::ArtifactStorageConfig::default(),
         };
 
         let client = ControlPlaneClient::new(config);
@@ -543,6 +619,8 @@ mod tests {
                 exchange: "ops.build".to_string(),
                 queue_prefix: "test-runner".to_string(),
                 prefetch: 1,
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: crate::config::ExecutionConfig {
                 workspace_base_dir: "/tmp/test-workspace".to_string(),
@@ -552,6 +630,7 @@ mod tests {
                 cache_dir: None,
                 docker: None,
             },
+            artifact_storage: crate::config::ArtifactStorageConfig::default(),
         };
 
         let client = ControlPlaneClient::new(config);

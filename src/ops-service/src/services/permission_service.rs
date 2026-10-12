@@ -14,6 +14,9 @@ impl PermissionService {
     }
 
     /// 检查用户是否拥有权限
+    ///
+    /// 单条 SQL 判定（此前对每个角色绑定循环单查 role_has_permission，
+    /// N 个绑定即 N+1 次查询）。
     pub async fn check_permission(
         &self,
         user_id: Uuid,
@@ -22,29 +25,50 @@ impl PermissionService {
         scope_type: Option<&str>,
         scope_value: Option<&str>,
     ) -> Result<bool, AppError> {
-        let role_repo = RoleRepository::new(self.db.clone());
-
-        // 获取用户的角色绑定
-        let bindings = role_repo.get_user_role_bindings(user_id).await?;
-
-        // 检查每个角色绑定
-        for binding in bindings {
-            // 检查权限范围是否匹配
-            if !self.scope_matches(&binding, scope_type, scope_value) {
-                continue;
+        // scope_type = None 表示"是否拥有该权限"（资源级作用域过滤由
+        // filter_resources_by_scope / 各列表接口负责）；
+        // 旧实现对 None 只认 global 绑定，导致环境/组作用域角色的所有
+        // API 调用一律 403——作用域 RBAC 实际不可用。
+        let scope_filter = match (scope_type, scope_value) {
+            (Some(st), Some(sv)) => {
+                // 要求特定作用域：global 绑定或完全匹配的作用域绑定
+                format!(
+                    "AND (rb.scope_type = 'global' OR (rb.scope_type = '{}' AND rb.scope_value = '{}'))",
+                    st.replace('\'', "''"),
+                    sv.replace('\'', "''")
+                )
             }
+            _ => String::new(),
+        };
 
-            // 检查角色是否拥有该权限
-            let has_perm = role_repo
-                .role_has_permission(binding.role_id, resource, action)
-                .await?;
+        let sql = format!(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM role_bindings rb
+                JOIN role_permissions rp ON rp.role_id = rb.role_id
+                JOIN permissions p ON rp.permission_id = p.id
+                WHERE rb.user_id = $1
+                  AND p.resource = $2
+                  AND p.action = $3
+                  {}
+            )
+            "#,
+            scope_filter
+        );
 
-            if has_perm {
-                return Ok(true);
-            }
-        }
+        let has: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind(user_id)
+            .bind(resource)
+            .bind(action)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to check permission");
+                AppError::database("Failed to check permission")
+            })?;
 
-        Ok(false)
+        Ok(has)
     }
 
     /// 检查权限，如果无权限则返回错误
@@ -74,6 +98,10 @@ impl PermissionService {
     }
 
     /// 检查权限范围是否匹配
+    ///
+    /// 保留给未来按作用域精确校验的调用方使用；当前所有调用点都以
+    /// required_type=None 做权限级判定（作用域过滤在资源层完成）。
+    #[allow(dead_code)]
     fn scope_matches(
         &self,
         binding: &RoleBinding,
@@ -87,19 +115,19 @@ impl PermissionService {
             }
             "group" => {
                 // 必须要求 group 范围且值匹配
-                if let Some("group") = required_type {
-                    if let Some(required) = required_value {
-                        return binding.scope_value.as_ref().is_some_and(|v| v == required);
-                    }
+                if let Some("group") = required_type
+                    && let Some(required) = required_value
+                {
+                    return binding.scope_value.as_ref().is_some_and(|v| v == required);
                 }
                 false
             }
             "environment" => {
                 // 必须要求 environment 范围且值匹配
-                if let Some("environment") = required_type {
-                    if let Some(required) = required_value {
-                        return binding.scope_value.as_ref().is_some_and(|v| v == required);
-                    }
+                if let Some("environment") = required_type
+                    && let Some(required) = required_value
+                {
+                    return binding.scope_value.as_ref().is_some_and(|v| v == required);
                 }
                 false
             }

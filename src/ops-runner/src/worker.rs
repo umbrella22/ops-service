@@ -2,11 +2,13 @@
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use lapin::{options::*, Channel, Connection, ConnectionProperties, ExchangeKind, Queue};
 use lapin::types::ShortString;
+use lapin::{Channel, Connection, ConnectionProperties, ExchangeKind, Queue, options::*};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
-use tracing::{debug, error, info};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::config::RunnerConfig;
 use crate::executor::BuildExecutor;
@@ -20,25 +22,54 @@ fn short_string(value: impl Into<String>) -> ShortString {
     value.into().into()
 }
 
+/// 取消消息 routing key 前缀（对应 common::RoutingKeys::BUILD_CANCEL，实际键为
+/// `build.cancel.<job_id>`）
+const CANCEL_ROUTING_KEY_PREFIX: &str = "build.cancel.";
+
+/// 预取窗口中为取消消息预留的槽位。
+///
+/// 任务在到达终态前不会 ack，会持续占用预取窗口；取消消息与任务共用同一队列，
+/// 若预取数不高于最大并发任务数，任务执行期间取消消息将无法送达。
+const CANCEL_PREFETCH_HEADROOM: u16 = 4;
+
+/// 判断 routing key 是否为构建取消消息（`build.cancel.<job_id>`）
+///
+/// 前缀必须完整匹配到 `.`，因此 `build.cancelled-x`、`build.node` 等不会误判；
+/// `build.cancel.`（空 job_id）同样按取消消息处理，随后的载荷解析失败
+/// 会走毒消息拒绝路径。
+fn is_cancel_message(routing_key: &str) -> bool {
+    routing_key.starts_with(CANCEL_ROUTING_KEY_PREFIX)
+}
+
 /// 任务 Worker
 pub struct TaskWorker {
     #[allow(dead_code)]
-    config: Arc<RunnerConfig>,
+    config: Arc<RwLock<RunnerConfig>>,
     channel: Channel,
     queue: Queue,
     executor: Arc<BuildExecutor>,
     publisher: Arc<MessagePublisher>,
     semaphore: Arc<Semaphore>,
+    /// 当前正在执行的任务数（心跳上报用）
+    current_jobs: Arc<AtomicUsize>,
 }
 
 impl TaskWorker {
     /// 创建新的 Worker
-    pub async fn new(config: Arc<RunnerConfig>) -> Result<Self> {
+    pub async fn new(
+        config: Arc<RwLock<RunnerConfig>>,
+        current_jobs: Arc<AtomicUsize>,
+    ) -> Result<Self> {
+        // 连接设置读取当前配置快照（可能包含控制面下发的队列/交换机覆盖）
+        let snapshot = config.read().await.clone();
+
         // 连接到 RabbitMQ
-        let conn =
-            Connection::connect(&config.message_queue.amqp_url, ConnectionProperties::default())
-                .await
-                .context("Failed to connect to RabbitMQ")?;
+        let conn = Connection::connect(
+            &snapshot.message_queue.amqp_url,
+            ConnectionProperties::default(),
+        )
+        .await
+        .context("Failed to connect to RabbitMQ")?;
 
         info!("Connected to RabbitMQ");
 
@@ -50,7 +81,7 @@ impl TaskWorker {
         // 声明交换机（与服务端一致使用 durable）
         channel
             .exchange_declare(
-                short_string(config.message_queue.exchange.clone()),
+                short_string(snapshot.message_queue.exchange.clone()),
                 ExchangeKind::Topic,
                 ExchangeDeclareOptions {
                     durable: true,
@@ -61,32 +92,52 @@ impl TaskWorker {
             .await
             .context("Failed to declare exchange")?;
 
-        info!("Declared exchange: {}", config.message_queue.exchange);
+        info!("Declared exchange: {}", snapshot.message_queue.exchange);
 
         // 声明队列
-        let queue_name = config.queue_name();
+        let queue_name = snapshot.queue_name();
         let queue = channel
-            .queue_declare(short_string(queue_name.clone()), QueueDeclareOptions::default(), FieldTable::default())
+            .queue_declare(
+                short_string(queue_name.clone()),
+                QueueDeclareOptions::default(),
+                FieldTable::default(),
+            )
             .await
             .context("Failed to declare queue")?;
 
         info!("Declared queue: {}", queue_name);
 
         // 设置预取
+        //
+        // 任务在终态前不会被 ack，会占满预取窗口；预取数必须至少容纳全部
+        // 并发任务并预留取消消息槽位，否则取消消息（与任务同队列）在任务
+        // 执行期间无法送达，运行中的作业将无法被取消。
+        let effective_prefetch = snapshot.message_queue.prefetch.max(
+            snapshot
+                .runner
+                .max_concurrent_jobs
+                .saturating_add(CANCEL_PREFETCH_HEADROOM as usize) as u16,
+        );
+        if effective_prefetch != snapshot.message_queue.prefetch {
+            debug!(
+                "Raising prefetch from {} to {} to keep cancel messages deliverable during execution",
+                snapshot.message_queue.prefetch, effective_prefetch
+            );
+        }
         channel
-            .basic_qos(config.message_queue.prefetch, BasicQosOptions::default())
+            .basic_qos(effective_prefetch, BasicQosOptions::default())
             .await
             .context("Failed to set QoS")?;
 
         // 绑定队列到交换机
         // 同时支持广播模式（向后兼容）和定向模式（新）
-        for capability in &config.runner.capabilities {
+        for capability in &snapshot.runner.capabilities {
             // 广播模式：build.<capability>（向后兼容，逐步废弃）
-            let broadcast_routing_key = config.routing_key(capability);
+            let broadcast_routing_key = snapshot.routing_key(capability);
             channel
                 .queue_bind(
                     short_string(queue_name.clone()),
-                    short_string(config.message_queue.exchange.clone()),
+                    short_string(snapshot.message_queue.exchange.clone()),
                     short_string(broadcast_routing_key.clone()),
                     QueueBindOptions::default(),
                     FieldTable::default(),
@@ -99,11 +150,11 @@ impl TaskWorker {
             );
 
             // 定向模式：build.<capability>.<runner_name>（只有此 runner 接收）
-            let direct_routing_key = config.routing_key_for_runner(capability);
+            let direct_routing_key = snapshot.routing_key_for_runner(capability);
             channel
                 .queue_bind(
                     short_string(queue_name.clone()),
-                    short_string(config.message_queue.exchange.clone()),
+                    short_string(snapshot.message_queue.exchange.clone()),
                     short_string(direct_routing_key.clone()),
                     QueueBindOptions::default(),
                     FieldTable::default(),
@@ -116,14 +167,33 @@ impl TaskWorker {
             );
         }
 
+        // 绑定取消广播路由：build.cancel.#（与任务共用同一队列）。
+        // 控制面向 build 交换机发布 `build.cancel.<job_id>`（广播），
+        // 所有 Runner 都会收到，不匹配的 job 在取消处理中被静默忽略。
+        let cancel_routing_key = format!("{}.#", RoutingKeys::BUILD_CANCEL);
+        channel
+            .queue_bind(
+                short_string(queue_name.clone()),
+                short_string(snapshot.message_queue.exchange.clone()),
+                short_string(cancel_routing_key.clone()),
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .context("Failed to bind queue (build cancel)")?;
+        debug!(
+            "Bound queue {} to exchange with cancel routing key: {}",
+            queue_name, cancel_routing_key
+        );
+
         // 创建执行引擎
-        let executor = Arc::new(BuildExecutor::new(config.clone())?);
+        let executor = Arc::new(BuildExecutor::new(config.clone()).await?);
 
         // 创建消息发布器
-        let publisher = Arc::new(MessagePublisher::new(&config, channel.clone()).await?);
+        let publisher = Arc::new(MessagePublisher::new(&snapshot, channel.clone()).await?);
 
         // 创建信号量用于并发控制
-        let semaphore = Arc::new(Semaphore::new(config.runner.max_concurrent_jobs));
+        let semaphore = Arc::new(Semaphore::new(snapshot.runner.max_concurrent_jobs));
 
         Ok(Self {
             config,
@@ -132,6 +202,7 @@ impl TaskWorker {
             executor,
             publisher,
             semaphore,
+            current_jobs,
         })
     }
 
@@ -158,18 +229,37 @@ impl TaskWorker {
         while let Some(delivery) = consumer.next().await {
             let delivery = delivery.context("Failed to get delivery")?;
 
-            // 获取信号量许可
-            let permit = self.semaphore.clone().acquire_owned().await.unwrap();
-
             let executor = self.executor.clone();
             let publisher = self.publisher.clone();
             let channel = self.channel.clone();
+            let current_jobs = self.current_jobs.clone();
+            let semaphore = self.semaphore.clone();
 
+            // 取消消息（build.cancel.<job_id>）为广播且必须及时生效：
+            // 不获取信号量许可——许可专用于任务执行，若取消排在许可之后，
+            // 并发打满时会迟到甚至永远无法处理
+            if is_cancel_message(delivery.routing_key.as_str()) {
+                tokio::spawn(async move {
+                    if let Err(e) = Self::process_cancel_message(delivery, executor, channel).await
+                    {
+                        error!("Failed to process cancel message: {}", e);
+                    }
+                });
+                continue;
+            }
+
+            // 任务消息：在派生的任务内部获取许可，避免阻塞消费循环——
+            // 否则许可打满期间，后续到达的取消消息同样无法被及时处理
             tokio::spawn(async move {
+                // 获取信号量许可
+                let permit = semaphore.acquire_owned().await.unwrap();
+
                 let task_id = delivery.routing_key.clone();
 
                 // 处理消息
-                match Self::process_message(delivery, executor, publisher, channel).await {
+                match Self::process_message(delivery, executor, publisher, channel, current_jobs)
+                    .await
+                {
                     Ok(_) => {
                         info!("Task processed successfully: {}", task_id);
                     }
@@ -187,42 +277,111 @@ impl TaskWorker {
     }
 
     /// 处理单条消息
+    ///
+    /// basic_ack 推迟到任务到达终态（终态状态已发布）之后，
+    /// 避免 Worker 在执行过程中崩溃导致任务丢失；
+    /// 消息解析失败视为毒消息，拒绝且不重新入队。
     async fn process_message(
         delivery: lapin::message::Delivery,
         executor: Arc<BuildExecutor>,
         publisher: Arc<MessagePublisher>,
         channel: Channel,
+        current_jobs: Arc<AtomicUsize>,
     ) -> Result<()> {
-        // 解析消息
-        let task: BuildTaskMessage =
-            serde_json::from_slice(&delivery.data).context("Failed to parse task message")?;
+        // 解析消息；失败视为毒消息，拒绝且不重新入队
+        let task: BuildTaskMessage = match serde_json::from_slice(&delivery.data) {
+            Ok(task) => task,
+            Err(e) => {
+                error!("Failed to parse task message (poison message): {}", e);
+                channel
+                    .basic_reject(
+                        delivery.delivery_tag,
+                        BasicRejectOptions { requeue: false },
+                    )
+                    .await
+                    .context("Failed to reject poison message")?;
+                return Ok(());
+            }
+        };
 
         info!("Received build task: job={}, task={}", task.job_id, task.task_id);
 
-        // 确认消息
+        // 每次任务执行使用唯一 attempt_id，贯穿该任务发布的所有状态/日志消息
+        let attempt_id = Uuid::new_v4();
+
+        // 执行构建；executor 保证发布终态（Succeeded/Failed/Timeout/Cancelled）后才返回 Ok
+        current_jobs.fetch_add(1, Ordering::SeqCst);
+        let exec_result = executor.execute(task.clone(), publisher.as_ref(), attempt_id).await;
+        current_jobs.fetch_sub(1, Ordering::SeqCst);
+
+        match exec_result {
+            Ok(_) => {
+                info!("Build reached terminal state: job={}, task={}", task.job_id, task.task_id);
+            }
+            Err(e) => {
+                // 终态未能由 executor 发布（如发布失败），这里兜底上报。
+                // 错误分类：超时类归 Timeout，其余归 Unknown（不再一律归为 Network）
+                error!("Build failed: {}", e);
+                let msg = e.to_string();
+                let category = if msg.contains("timed out") || msg.contains("timeout") {
+                    ErrorCategory::Timeout
+                } else {
+                    ErrorCategory::Unknown
+                };
+                if let Err(pe) = publisher
+                    .publish_error(&task, &msg, category, attempt_id)
+                    .await
+                {
+                    warn!("Failed to publish fallback error status: {}", pe);
+                }
+            }
+        }
+
+        // 任务已到达终态（或已发布兜底失败状态），此时才确认消息
         channel
             .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
             .await
             .context("Failed to ack message")?;
 
-        // 发送接收状态
-        publisher
-            .publish_build_status(&task, BuildStatus::Received, None, None, None)
-            .await?;
+        Ok(())
+    }
 
-        // 执行构建
-        match executor.execute(task.clone(), publisher.as_ref()).await {
-            Ok(_) => {
-                info!("Build completed successfully");
-            }
+    /// 处理取消消息（广播，幂等）
+    ///
+    /// 解析失败视为毒消息，拒绝且不重新入队；取消本身幂等，重复投递或
+    /// 对本 Runner 未知的 job 仅在 executor 中记录取消意图（用于关闭
+    /// "取消先于任务送达"的竞态）后立即 ack。
+    async fn process_cancel_message(
+        delivery: lapin::message::Delivery,
+        executor: Arc<BuildExecutor>,
+        channel: Channel,
+    ) -> Result<()> {
+        let cancel: BuildCancelMessage = match serde_json::from_slice(&delivery.data) {
+            Ok(msg) => msg,
             Err(e) => {
-                error!("Build failed: {}", e);
-                // 发送失败状态
-                let _ = publisher
-                    .publish_error(&task, &e.to_string(), ErrorCategory::Network)
-                    .await;
+                error!("Failed to parse cancel message (poison message): {}", e);
+                channel
+                    .basic_reject(
+                        delivery.delivery_tag,
+                        BasicRejectOptions { requeue: false },
+                    )
+                    .await
+                    .context("Failed to reject poison cancel message")?;
+                return Ok(());
             }
-        }
+        };
+
+        info!(
+            "Received build cancel: job={}, task={:?}, reason={:?}",
+            cancel.job_id, cancel.task_id, cancel.reason
+        );
+
+        executor.cancel_job(cancel.job_id).await;
+
+        channel
+            .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
+            .await
+            .context("Failed to ack cancel message")?;
 
         Ok(())
     }
@@ -257,6 +416,8 @@ mod tests {
                 exchange: "ops.build".to_string(),
                 queue_prefix: "test-worker".to_string(),
                 prefetch: 1,
+                queue_name_override: None,
+                routing_key_pattern: None,
             },
             execution: crate::config::ExecutionConfig {
                 workspace_base_dir: "/tmp/test-workspace".to_string(),
@@ -266,6 +427,7 @@ mod tests {
                 cache_dir: None,
                 docker: None,
             },
+            artifact_storage: crate::config::ArtifactStorageConfig::default(),
         }
     }
 
@@ -289,6 +451,7 @@ mod tests {
                     map
                 },
                 parameters: HashMap::new(),
+                timeout_secs: None,
             },
             steps: vec![BuildStep {
                 id: "step-1".to_string(),
@@ -303,6 +466,7 @@ mod tests {
                 docker_image: None,
             }],
             publish_target: None,
+            pipeline_file: None,
         }
     }
 
@@ -461,11 +625,13 @@ mod tests {
             build_type: "rust".to_string(),
             env_vars,
             parameters,
+            timeout_secs: Some(1200),
         };
 
         assert_eq!(params.build_type, "rust");
         assert_eq!(params.env_vars.len(), 2);
         assert_eq!(params.parameters.len(), 2);
+        assert_eq!(params.timeout_secs, Some(1200));
 
         let json = serde_json::to_string(&params).unwrap();
         assert!(json.contains("\"build_type\":\"rust\""));
@@ -643,5 +809,43 @@ mod tests {
         assert_eq!(deserialized.steps[0].name, "Install");
         assert_eq!(deserialized.steps[1].name, "Build");
         assert_eq!(deserialized.steps[2].name, "Test");
+    }
+
+    #[test]
+    fn test_is_cancel_message() {
+        // 取消消息路由键：build.cancel.<job_id>
+        assert!(is_cancel_message(&format!("build.cancel.{}", Uuid::new_v4())));
+        // 前缀后必须紧跟 '.'：以下均不是取消消息
+        assert!(!is_cancel_message("build.node"));
+        assert!(!is_cancel_message("build.node.runner-1"));
+        assert!(!is_cancel_message("build.cancelled-x"));
+        // 边界：前缀完全匹配但 job_id 为空，仍按取消消息处理，
+        // 载荷解析失败会走毒消息拒绝路径
+        assert!(is_cancel_message("build.cancel."));
+    }
+
+    #[test]
+    fn test_cancel_message_parse_from_bytes() {
+        let msg = BuildCancelMessage {
+            job_id: Uuid::new_v4(),
+            task_id: Some(Uuid::new_v4()),
+            requested_by: None,
+            reason: Some("user requested".to_string()),
+            timestamp: chrono::Utc::now(),
+        };
+
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let parsed: BuildCancelMessage = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(parsed.job_id, msg.job_id);
+        assert_eq!(parsed.task_id, msg.task_id);
+        assert_eq!(parsed.reason.as_deref(), Some("user requested"));
+    }
+
+    #[test]
+    fn test_cancel_message_parse_rejects_garbage() {
+        // 非取消载荷解析必须失败，从而走毒消息拒绝（requeue=false）路径
+        let result = serde_json::from_slice::<BuildCancelMessage>(br#"{"foo":1}"#);
+        assert!(result.is_err());
     }
 }

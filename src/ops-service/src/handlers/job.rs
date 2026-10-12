@@ -2,10 +2,10 @@
 //! P2 阶段：作业相关的API端点
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -470,7 +470,7 @@ async fn check_job_access(
     }
 
     let hosts = sqlx::query_as::<_, HostScopeInfo>(
-        "SELECT group_id, environment FROM hosts WHERE id = ANY($1) AND status = 'active'",
+        "SELECT group_id, environment FROM assets_hosts WHERE id = ANY($1) AND status = 'active'",
     )
     .bind(&target_host_ids)
     .fetch_all(&state.db)
@@ -545,7 +545,7 @@ async fn validate_target_hosts_access(
         }
 
         let hosts = sqlx::query_as::<_, HostScopeInfo>(
-            "SELECT id, group_id, environment FROM hosts WHERE id = ANY($1) AND status = 'active'",
+            "SELECT id, group_id, environment FROM assets_hosts WHERE id = ANY($1) AND status = 'active'",
         )
         .bind(&all_host_ids)
         .fetch_all(&state.db)

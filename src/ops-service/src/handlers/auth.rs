@@ -4,7 +4,7 @@ use crate::{
     auth::middleware::AuthContext, error::AppError, middleware::AppState, models::auth::*,
     services::audit_service::AuditAction,
 };
-use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -12,22 +12,13 @@ use std::sync::Arc;
 pub async fn login(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    client_ip: crate::middleware::ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .or_else(|| headers.get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string());
-
-    // 如果不信任代理，忽略代理头，从 request extensions 获取
-    let client_ip = if state.config.security.trust_proxy {
-        client_ip
-    } else {
-        None
-    }
-    .unwrap_or("unknown".to_string());
+    // ClientIp 由限流中间件按 trust_proxy 解析后注入（代理头只在
+    // trust_proxy=true 时被信任），此处只做字符串化
+    let client_ip = client_ip.0.to_string();
+    let _ = headers;
 
     let user_agent = headers
         .get("user-agent")
@@ -46,9 +37,11 @@ pub async fn login(
 pub async fn refresh_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    client_ip: crate::middleware::ClientIp,
     Json(req): Json<RefreshTokenRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let client_ip = get_client_ip_str(&headers, state.config.security.trust_proxy);
+    let client_ip = client_ip.0.to_string();
+    let _ = headers;
 
     let token_pair = state.auth_service.refresh_token(req, &client_ip).await?;
 
@@ -66,8 +59,8 @@ pub async fn logout(
         .logout(&req.refresh_token, auth_context.user_id)
         .await?;
 
-    // 审计日志
-    state
+    // 审计日志（令牌已撤销成功，审计失败不应把登出变成 500）
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -77,7 +70,10 @@ pub async fn logout(
             Some("User logged out"),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, user_id = %auth_context.user_id, "Failed to write audit log for logout");
+    }
 
     Ok(Json(json!({"message": "已成功登出"})))
 }
@@ -89,8 +85,8 @@ pub async fn logout_all(
 ) -> Result<impl IntoResponse, AppError> {
     let revoked_count = state.auth_service.logout_all(auth_context.user_id).await?;
 
-    // 审计日志
-    state
+    // 审计日志（会话已全部撤销成功，审计失败不应把登出变成 500）
+    if let Err(e) = state
         .audit_service
         .log_action_simple(
             auth_context.user_id,
@@ -100,7 +96,10 @@ pub async fn logout_all(
             Some(&format!("Logged out from all devices, revoked {} sessions", revoked_count)),
             None,
         )
-        .await?;
+        .await
+    {
+        tracing::error!(error = %e, user_id = %auth_context.user_id, "Failed to write audit log for logout-all");
+    }
 
     Ok(Json(json!({
         "message": format!("已从 {} 个设备登出", revoked_count)
@@ -117,58 +116,9 @@ pub async fn get_current_user(auth_context: AuthContext) -> Result<impl IntoResp
     })))
 }
 
-/// 获取客户端 IP 地址字符串（统一版本）
-/// 当 trust_proxy 为 false 时忽略代理头，使用默认值
-fn get_client_ip_str(headers: &HeaderMap, trust_proxy: bool) -> String {
-    if !trust_proxy {
-        return "unknown".to_string();
-    }
-
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(forwarded_str) = forwarded.to_str() {
-            if let Some(first_ip) = forwarded_str.split(',').next() {
-                return first_ip.trim().to_string();
-            }
-        }
-    }
-
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(ip_str) = real_ip.to_str() {
-            return ip_str.to_string();
-        }
-    }
-
-    "unknown".to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_get_client_ip_from_x_forwarded_for() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "192.168.1.1, 10.0.0.1".parse().unwrap());
 
-        let ip = get_client_ip_str(&headers, true);
-        assert_eq!(ip, "192.168.1.1");
-    }
-
-    #[test]
-    fn test_get_client_ip_from_x_real_ip() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", "192.168.1.2".parse().unwrap());
-
-        let ip = get_client_ip_str(&headers, true);
-        assert_eq!(ip, "192.168.1.2");
-    }
-
-    #[test]
-    fn test_get_client_ip_trust_proxy_false() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
-
-        let ip = get_client_ip_str(&headers, false);
-        assert_eq!(ip, "unknown");
-    }
 }

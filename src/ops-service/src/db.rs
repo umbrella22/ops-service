@@ -4,8 +4,8 @@
 use crate::config::DatabaseConfig;
 use secrecy::ExposeSecret;
 use sqlx::{
+    AssertSqlSafe, Connection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
-    Connection, PgPool,
 };
 use std::str::FromStr;
 use std::time::Duration;
@@ -20,7 +20,9 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<PgPool, DbError> {
         Ok(pool) => pool,
         Err(e) if is_missing_database_error(&e) => {
             if config.auto_create_if_missing {
-                tracing::warn!("Database does not exist but auto_create_if_missing is enabled, attempting to create it");
+                tracing::warn!(
+                    "Database does not exist but auto_create_if_missing is enabled, attempting to create it"
+                );
                 ensure_database_exists(db_url).await?;
                 connect_pool(config, db_url)
                     .await
@@ -90,9 +92,16 @@ async fn ensure_database_exists(db_url: &str) -> Result<(), DbError> {
     }
 
     let sql = format!("CREATE DATABASE {}", quote_ident(&db_name));
-    match sqlx::query(&sql).execute(&mut conn).await {
+    match sqlx::query(AssertSqlSafe(sql)).execute(&mut conn).await {
         Ok(_) => Ok(()),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P04") => Ok(()),
+        // 42P04 = duplicate_database；并发建库时 PostgreSQL 也可能报
+        // 23505（pg_database_datname_index 唯一约束冲突），同样视为已存在
+        Err(sqlx::Error::Database(db_err))
+            if db_err.code().as_deref() == Some("42P04")
+                || db_err.code().as_deref() == Some("23505") =>
+        {
+            Ok(())
+        }
         Err(e) => Err(DbError::DatabaseBootstrapFailed(e.to_string())),
     }
 }
@@ -183,14 +192,11 @@ mod tests {
         let healthy = HealthStatus::Healthy;
         let unhealthy = HealthStatus::Unhealthy("Connection refused".to_string());
 
-        match healthy {
-            HealthStatus::Healthy => assert!(true),
-            _ => assert!(false),
-        }
+        assert!(matches!(healthy, HealthStatus::Healthy));
 
         match unhealthy {
             HealthStatus::Unhealthy(msg) => assert_eq!(msg, "Connection refused"),
-            _ => assert!(false),
+            _ => panic!("expected Unhealthy variant"),
         }
     }
 }

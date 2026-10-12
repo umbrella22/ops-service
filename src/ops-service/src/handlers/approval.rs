@@ -2,10 +2,10 @@
 //! P3 阶段：审批流相关API处理器
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -199,7 +199,16 @@ pub async fn get_approval_statistics(
 }
 
 /// 订阅审批事件流（SSE）
-pub async fn subscribe_approval_events(State(state): State<Arc<AppState>>) -> Result<Response> {
+pub async fn subscribe_approval_events(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<Response> {
+    // 鉴权：需要 approval:read（此前任意登录用户可旁听全部审批事件）
+    state
+        .permission_service
+        .require_permission(auth.user_id, "approval", "read", None, None)
+        .await?;
+
     // 创建SSE流
     let stream = state
         .event_bus
@@ -223,8 +232,35 @@ pub async fn subscribe_approval_events(State(state): State<Arc<AppState>>) -> Re
 /// 订阅作业事件流（SSE）
 pub async fn subscribe_job_events(
     State(state): State<Arc<AppState>>,
+    auth: AuthContext,
     Path(job_id): Path<Uuid>,
 ) -> Result<Response> {
+    // 鉴权：需要 job:read，且非管理员只能订阅自己创建的作业
+    // （此前完全没有授权检查，任意登录用户可旁听任意作业的实时输出）
+    state
+        .permission_service
+        .require_permission(auth.user_id, "job", "read", None, None)
+        .await?;
+    let is_admin = state
+        .permission_service
+        .is_admin(auth.user_id)
+        .await
+        .unwrap_or(false);
+    if !is_admin {
+        let owner: Option<Uuid> = sqlx::query_scalar("SELECT created_by FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to check job owner");
+                AppError::database("Failed to check job")
+            })?;
+        match owner {
+            Some(created_by) if created_by == auth.user_id => {}
+            _ => return Err(AppError::not_found("Job not found")), // 反枚举
+        }
+    }
+
     // 创建SSE流
     let stream = state
         .event_bus

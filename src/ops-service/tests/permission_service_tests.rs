@@ -234,18 +234,18 @@ fn scope_matches_helper(
     match binding.scope_type.as_str() {
         "global" => true,
         "group" => {
-            if let Some("group") = required_type {
-                if let Some(required) = required_value {
-                    return binding.scope_value.as_ref().is_some_and(|v| v == required);
-                }
+            if let Some("group") = required_type
+                && let Some(required) = required_value
+            {
+                return binding.scope_value.as_ref().is_some_and(|v| v == required);
             }
             false
         }
         "environment" => {
-            if let Some("environment") = required_type {
-                if let Some(required) = required_value {
-                    return binding.scope_value.as_ref().is_some_and(|v| v == required);
-                }
+            if let Some("environment") = required_type
+                && let Some(required) = required_value
+            {
+                return binding.scope_value.as_ref().is_some_and(|v| v == required);
             }
             false
         }
@@ -281,10 +281,10 @@ fn test_permission_format() {
 /// 测试常见资源和操作组合
 #[test]
 fn test_common_permissions() {
-    let user_permissions = vec!["users:read", "users:write", "users:delete"];
-    let host_permissions = vec!["hosts:read", "hosts:execute", "hosts:write"];
-    let job_permissions = vec!["jobs:read", "jobs:create", "jobs:execute", "jobs:cancel"];
-    let role_permissions = vec!["roles:read", "roles:create", "roles:delete"];
+    let user_permissions = ["users:read", "users:write", "users:delete"];
+    let host_permissions = ["hosts:read", "hosts:execute", "hosts:write"];
+    let job_permissions = ["jobs:read", "jobs:create", "jobs:execute", "jobs:cancel"];
+    let role_permissions = ["roles:read", "roles:create", "roles:delete"];
 
     // 验证权限格式一致性
     for perm in user_permissions

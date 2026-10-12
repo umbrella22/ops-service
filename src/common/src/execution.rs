@@ -78,10 +78,14 @@ impl ExecutionResult {
     pub fn output_summary(&self, max_len: usize) -> String {
         let full = self.full_output();
         if full.len() <= max_len {
-            full
-        } else {
-            format!("{}...", &full[..max_len])
+            return full;
         }
+        // 按字符边界截断，避免切在多字节字符中间导致 panic
+        let mut cut = max_len;
+        while cut > 0 && !full.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}...", &full[..cut])
     }
 }
 
@@ -431,9 +435,11 @@ mod tests {
 
     #[test]
     fn test_failure_reason_stats_total() {
-        let mut stats = FailureReasonStats::default();
-        stats.network_error = 5;
-        stats.auth_failed = 2;
+        let stats = FailureReasonStats {
+            network_error: 5,
+            auth_failed: 2,
+            ..Default::default()
+        };
 
         assert_eq!(stats.total(), 7);
     }

@@ -6,7 +6,6 @@ use ops_service::models::asset::*;
 use ops_service::models::auth::*;
 use ops_service::models::role::*;
 use ops_service::models::user::*;
-use serde_json;
 use uuid::Uuid;
 
 // ==================== User 模型测试 ====================
@@ -27,9 +26,10 @@ fn test_user_status_from_string() {
     let enabled_upper: UserStatus = "ENABLED".to_string().into();
     assert_eq!(enabled_upper, UserStatus::Enabled);
 
-    // 测试未知状态默认为 Disabled
+    // 安全修复：未知状态默认为 Enabled 并告警
+    // （静默映射为 Disabled 会在枚举漂移时无声禁用正常账号）
     let unknown: UserStatus = "unknown".to_string().into();
-    assert_eq!(unknown, UserStatus::Disabled);
+    assert_eq!(unknown, UserStatus::Enabled);
 }
 
 #[test]

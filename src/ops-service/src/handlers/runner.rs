@@ -12,7 +12,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use sqlx::Row;
@@ -331,11 +331,17 @@ pub async fn register_runner(
     State(state): State<Arc<AppState>>,
     Json(request): Json<RunnerRegistrationRequest>,
 ) -> Result<impl IntoResponse> {
+    // Runner 名称会进入 routing key 与队列名，必须限制字符集，
+    // 否则可注入 topic 通配符（#/*）或破坏 AMQP 命名
+    validate_runner_name(&request.name)?;
+    // usize -> i32 溢出会变成负数，进而破坏调度容量判断
+    let max_concurrent_jobs = request.max_concurrent_jobs.clamp(1, 1000) as i32;
+
     // 获取合并后的出站白名单
     let outbound_allowlist = request.get_outbound_allowlist();
 
     // 检查 Runner 名称是否已存在
-    let existing = sqlx::query("SELECT id FROM runners WHERE name = $1")
+    let existing = sqlx::query("SELECT id, status FROM runners WHERE name = $1")
         .bind(&request.name)
         .fetch_optional(&state.db)
         .await
@@ -347,6 +353,15 @@ pub async fn register_runner(
     let (runner_id, is_new) = if let Some(row) = existing {
         // Runner 已存在，更新信息
         let id: Uuid = row.get("id");
+        let status: String = row.try_get("status").unwrap_or_default();
+
+        // 管理员 disable 后，runner 不得通过重新注册自我复活
+        if status == "disabled" {
+            warn!(runner_id = %id, name = %request.name, "Disabled runner attempted to re-register");
+            return Err(AppError::forbidden_custom(
+                "Runner is disabled; contact an administrator to re-enable it",
+            ));
+        }
 
         sqlx::query(
             "UPDATE runners
@@ -357,7 +372,7 @@ pub async fn register_runner(
         )
         .bind(serde_json::to_value(&request.capabilities).unwrap_or(serde_json::json!([])))
         .bind(request.docker_supported)
-        .bind(request.max_concurrent_jobs as i32)
+        .bind(max_concurrent_jobs)
         .bind(serde_json::to_value(&outbound_allowlist).unwrap_or(serde_json::json!([])))
         .bind(serde_json::json!([])) // IPs 现在合并在 domains 中
         .bind(id)
@@ -384,7 +399,7 @@ pub async fn register_runner(
         .bind(&request.name)
         .bind(serde_json::to_value(&request.capabilities).unwrap_or(serde_json::json!([])))
         .bind(request.docker_supported)
-        .bind(request.max_concurrent_jobs as i32)
+        .bind(max_concurrent_jobs)
         .bind(serde_json::to_value(&outbound_allowlist).unwrap_or(serde_json::json!([])))
         .bind(serde_json::json!([])) // IPs 现在合并在 domains 中
         .execute(&state.db)
@@ -443,10 +458,12 @@ pub async fn register_runner(
     let heartbeat_interval_secs = 30;
 
     // 构建 RabbitMQ 配置
+    // 与 ops-runner 实际声明保持一致（队列：ops-runner.<name>.queue，
+    // 路由：build.<type>[.<runner>]）；此前 advertised 值与 runner 推导不一致
     let rabbitmq_config = RunnerRabbitMqConfig {
         exchange: state.config.rabbitmq.build_exchange.clone(),
-        routing_key_pattern: format!("build.{{{}}}", request.name),
-        queue_name: format!("runner.{}.queue", request.name),
+        routing_key_pattern: "build.{type}[.{runner_name}]".to_string(),
+        queue_name: format!("ops-runner.{}.queue", request.name),
     };
 
     // 构建 Docker 配置（动态配置，考虑 Runner 名称和能力标签）
@@ -510,14 +527,36 @@ pub async fn runner_heartbeat(
         _ => "active",
     };
 
-    // 更新心跳和状态
+    // 更新心跳和状态。
+    // runner 侧 current_jobs 计数器已真实接线（任务开始 +1、终态 -1），
+    // 心跳无条件采纳上报值：既修复了旧"恒 0 清零"的容量失效，
+    // 也让任何残余的计数漂移（如重复回执导致的负偏差）在下一个心跳自愈。
+    // disabled 状态的心跳同样拒绝（与注册一致的管理语义）。
+    let current = sqlx::query("SELECT status FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to re-check runner status");
+            AppError::database("Failed to update heartbeat")
+        })?;
+    if let Some(row) = current {
+        let db_status: String = row.try_get("status").unwrap_or_default();
+        if db_status == "disabled" {
+            warn!(runner_id = %runner_id, name = %request.name, "Disabled runner attempted heartbeat");
+            return Err(AppError::forbidden_custom(
+                "Runner is disabled; contact an administrator to re-enable it",
+            ));
+        }
+    }
+    let reported_jobs = request.current_jobs.min(1000) as i32;
     sqlx::query(
         "UPDATE runners
          SET status = $1, current_jobs = $2, last_heartbeat = NOW(), updated_at = NOW()
          WHERE id = $3",
     )
     .bind(status)
-    .bind(request.current_jobs as i32)
+    .bind(reported_jobs)
     .bind(runner_id)
     .execute(&state.db)
     .await
@@ -545,7 +584,11 @@ pub async fn runner_heartbeat(
 
     let response = RunnerHeartbeatResponse {
         docker: docker_config,
-        config_version: Some(state.runner_config_version.load(std::sync::atomic::Ordering::Relaxed) as i64),
+        config_version: Some(
+            state
+                .runner_config_version
+                .load(std::sync::atomic::Ordering::Relaxed) as i64,
+        ),
         server_timestamp: Utc::now(),
     };
 
@@ -666,7 +709,7 @@ pub async fn update_runner_status(
         _ => {
             return Err(AppError::validation(
                 "Invalid status. Must be: active, maintenance, disabled",
-            ))
+            ));
         }
     };
 
@@ -794,4 +837,20 @@ pub async fn delete_runner(
 pub struct UpdateRunnerStatusRequest {
     /// 新状态（active, maintenance, disabled）
     pub status: String,
+}
+
+/// Runner 名称合法性：[A-Za-z0-9._-]{1,64}，禁止 topic 通配符与空白
+fn validate_runner_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(AppError::validation("Runner name must be 1-64 characters"));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(AppError::validation(
+            "Runner name may only contain letters, digits, '.', '_' and '-'",
+        ));
+    }
+    Ok(())
 }

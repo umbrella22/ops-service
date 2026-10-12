@@ -1,3 +1,4 @@
+use secrecy::ExposeSecret;
 use ops_service::{
     concurrency::ConcurrencyController,
     config::AppConfig,
@@ -63,8 +64,34 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Database initialized");
 
+    // 主机凭据落盘加密密钥（未配置时退化为明文，config.validate 已输出警告）
+    ops_service::services::crypto_service::init(
+        config
+            .security
+            .credential_encryption_key
+            .as_ref()
+            .map(|k| k.expose_secret().to_string()),
+    )
+    .await;
+
+    // 并发控制器：使用 config.concurrency 配置（此前被硬编码为 default，
+    // 环境变量调优完全不生效）
+    let concurrency_settings = &config.concurrency;
+    let strategy = match concurrency_settings.strategy.to_lowercase().as_str() {
+        "reject" => ops_service::concurrency::ConcurrencyStrategy::Reject,
+        "queue" => ops_service::concurrency::ConcurrencyStrategy::Queue,
+        _ => ops_service::concurrency::ConcurrencyStrategy::Wait,
+    };
     let concurrency_controller = std::sync::Arc::new(ConcurrencyController::new(
-        ops_service::concurrency::ConcurrencyConfig::default(),
+        ops_service::concurrency::ConcurrencyConfig {
+            global_limit: concurrency_settings.global_limit,
+            group_limit: concurrency_settings.group_limit,
+            environment_limit: concurrency_settings.environment_limit,
+            production_limit: concurrency_settings.production_limit,
+            acquire_timeout_secs: concurrency_settings.acquire_timeout_secs,
+            strategy,
+            queue_max_length: concurrency_settings.queue_max_length,
+        },
     ));
 
     let audit_service =
@@ -99,12 +126,15 @@ async fn main() -> anyhow::Result<()> {
         StorageService::new(ops_service::services::StorageConfig::default())
     }));
 
+    // 终态通知服务（未启用时为 None）
+    let notify_service =
+        ops_service::services::notify_service::NotifyService::from_config(&config.notifications);
+
     // 初始化 Webhook Nonce 防重放存储
-    let webhook_nonce_store = std::sync::Arc::new(
-        ops_service::middleware::webhook_hmac::NonceStore::new(
+    let webhook_nonce_store =
+        std::sync::Arc::new(ops_service::middleware::webhook_hmac::NonceStore::new(
             config.security.runner_webhook_nonce_ttl_secs,
-        ),
-    );
+        ));
 
     let app_state = Arc::new(AppState {
         db: db_pool.clone(),
@@ -139,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
         storage_service,
         webhook_nonce_store: Some(webhook_nonce_store),
         runner_config_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        notify_service,
     });
 
     let app = routes::create_router(app_state.clone());
@@ -148,6 +179,19 @@ async fn main() -> anyhow::Result<()> {
 
     // 启动审批超时自动过期任务 (P3)
     let expiry_handle = start_approval_expiry_task(app_state.clone());
+
+    // 启动限流器空闲回收任务（此前 cleanup_expired 从未被调度，
+    // IP 状态只增不减；修复后按空闲精确回收）
+    {
+        let limiter = app_state.rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                limiter.cleanup_expired(0).await;
+            }
+        });
+    }
 
     let addr = &config.server.addr;
     let listener = TcpListener::bind(addr).await?;
@@ -166,91 +210,77 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 启动 RabbitMQ 消费者后台任务（含自动重连）
+/// 启动 RabbitMQ 消费者后台任务（真正的自动重连：连接断开后重建
+/// RabbitMqConsumer，而不是对同一个死 channel 反复 basic_consume）
 async fn start_rabbitmq_consumer(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     let consumer_state = state.clone();
     tokio::spawn(async move {
-        // 尝试创建消费者（如果 RabbitMQ 未配置，则跳过）
-        let consumer = match RabbitMqConsumer::new(consumer_state.config.rabbitmq.clone()).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Failed to create RabbitMQ consumer: {}. RabbitMQ message consumption disabled.", e);
-                return;
+        let msg_consumer = BuildMessageConsumer::new(consumer_state.clone());
+
+        loop {
+            // 每轮循环都重新建立连接/通道/队列
+            let consumer = match RabbitMqConsumer::new(consumer_state.config.rabbitmq.clone())
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create RabbitMQ consumer: {}. Retrying in 5s...",
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue;
+                }
+            };
+
+            if let Err(e) = consumer.setup_consumer_queues().await {
+                tracing::warn!("Failed to setup consumer queues: {}. Retrying in 5s...", e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
             }
-        };
 
-        // 设置消费队列
-        if let Err(e) = consumer.setup_consumer_queues().await {
-            tracing::warn!(
-                "Failed to setup consumer queues: {}. RabbitMQ message consumption disabled.",
-                e
-            );
-            return;
-        }
+            tracing::info!("RabbitMQ consumer started, listening for build status and log messages");
 
-        tracing::info!("RabbitMQ consumer started, listening for build status and log messages");
-
-        let msg_consumer = BuildMessageConsumer::new(consumer_state);
-
-        // 启动状态消息消费者（含自动重连）
-        let status_consumer = consumer.clone();
-        let status_msg_consumer = msg_consumer.clone();
-        let status_handle = tokio::spawn(async move {
-            loop {
-                let consumer = status_msg_consumer.clone();
-                let status_cons = status_consumer.clone();
+            let status_msg_consumer = msg_consumer.clone();
+            let status_cons = consumer.clone();
+            let status_handle = tokio::spawn(async move {
+                // 处理完成后才 ack；失败按 requeue / DLQ 策略由消费循环处理
                 if let Err(e) = status_cons
-                    .consume_status_messages(move |data| {
-                        let c = consumer.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = c.handle_status_message(data).await {
-                                tracing::error!("Failed to handle status message: {}", e);
-                            }
-                        });
+                    .consume_status_messages(move |data, _delivery| {
+                        let c = status_msg_consumer.clone();
+                        async move { c.handle_status_message(data).await }
                     })
                     .await
                 {
-                    tracing::error!("Status consumer error: {}. Reconnecting in 5s...", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tracing::error!("Status consumer error: {}", e);
                 }
-            }
-        });
+            });
 
-        // 启动日志消息消费者（含自动重连）
-        let log_msg_consumer = msg_consumer;
-        let log_cons = consumer;
-        let log_handle = tokio::spawn(async move {
-            loop {
-                let consumer = log_msg_consumer.clone();
-                let cons = log_cons.clone();
-                if let Err(e) = cons
-                    .consume_log_messages(move |data| {
-                        let c = consumer.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = c.handle_log_message(data).await {
-                                tracing::error!("Failed to handle log message: {}", e);
-                            }
-                        });
+            let log_msg_consumer = msg_consumer.clone();
+            let log_cons = consumer.clone();
+            let log_handle = tokio::spawn(async move {
+                if let Err(e) = log_cons
+                    .consume_log_messages(move |data, _delivery| {
+                        let c = log_msg_consumer.clone();
+                        async move { c.handle_log_message(data).await }
                     })
                     .await
                 {
-                    tracing::error!("Log consumer error: {}. Reconnecting in 5s...", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tracing::error!("Log consumer error: {}", e);
+                }
+            });
+
+            // 任一消费者退出（连接断开）即整轮重建
+            tokio::select! {
+                _ = status_handle => {
+                    tracing::warn!("Status consumer stopped, reconnecting in 5s...");
+                }
+                _ = log_handle => {
+                    tracing::warn!("Log consumer stopped, reconnecting in 5s...");
                 }
             }
-        });
-
-        // 等待两个消费者完成（正常情况下不会完成）
-        tokio::select! {
-            _ = status_handle => {
-                tracing::warn!("Status consumer stopped unexpectedly");
-            }
-            _ = log_handle => {
-                tracing::warn!("Log consumer stopped unexpectedly");
-            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
-
-        tracing::info!("RabbitMQ consumer stopped");
     })
 }
 
@@ -298,17 +328,14 @@ fn start_approval_expiry_task(state: Arc<AppState>) -> tokio::task::JoinHandle<(
             interval.tick().await;
             let result = sqlx::query(
                 "UPDATE approval_requests SET status = 'timeout', completed_at = NOW()
-                 WHERE status = 'pending' AND expires_at < NOW()"
+                 WHERE status = 'pending' AND expires_at < NOW()",
             )
             .execute(&state.db)
             .await;
 
             match result {
                 Ok(r) if r.rows_affected() > 0 => {
-                    tracing::info!(
-                        rows = r.rows_affected(),
-                        "Auto-expired approval requests"
-                    );
+                    tracing::info!(rows = r.rows_affected(), "Auto-expired approval requests");
                 }
                 Ok(_) => {}
                 Err(e) => {

@@ -48,6 +48,7 @@ fn create_test_config() -> AppConfig {
             runner_webhook_nonce_ttl_secs: 600,
             login_rate_limit_max_attempts: 10,
             login_rate_limit_window_secs: 300,
+                credential_encryption_key: None,
         },
         ssh: SshConfig {
             default_username: "root".to_string(),
@@ -79,6 +80,7 @@ fn create_test_config() -> AppConfig {
         },
         runner_docker: RunnerDockerConfig::default(),
         metrics: MetricsConfig::default(),
+        notifications: Default::default(),
     }
 }
 

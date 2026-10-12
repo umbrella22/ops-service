@@ -47,7 +47,12 @@ impl From<String> for UserStatus {
             "enabled" => UserStatus::Enabled,
             "disabled" => UserStatus::Disabled,
             "locked" => UserStatus::Locked,
-            _ => UserStatus::Disabled,
+            // 未知状态按 Enabled 兜底并告警：静默映射为 Disabled 会在
+            // 枚举漂移时"无声禁用"正常账号
+            _ => {
+                tracing::warn!(status = %s, "Unknown user status, defaulting to Enabled");
+                UserStatus::Enabled
+            }
         }
     }
 }

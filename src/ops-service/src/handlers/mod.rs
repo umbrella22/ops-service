@@ -2,6 +2,7 @@
 
 pub mod approval;
 pub mod artifact;
+pub mod build_trigger;
 pub mod asset;
 pub mod audit;
 pub mod auth;

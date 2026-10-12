@@ -13,12 +13,13 @@ mod worker;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::time;
 use tracing::{error, info, warn};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use client::ControlPlaneClient;
 use config::RunnerConfig;
@@ -47,12 +48,6 @@ fn print_version() {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-
-    // 处理 --version 或 -V
-    if std::env::args().any(|a| a == "--version" || a == "-V") {
-        print_version();
-        return Ok(());
-    }
 
     // 初始化日志
     let log_level = if args.verbose {
@@ -86,21 +81,19 @@ async fn main() -> Result<()> {
     info!("Capabilities: {:?}", config.runner.capabilities);
     info!("Control plane: {}", config.control_plane.api_url);
 
-    // 创建控制面客户端
-    let mut client = ControlPlaneClient::new(config.clone());
+    // 共享配置：控制面下发的更新（Docker 配置热更新等）写入此配置，
+    // Worker / Executor 在每个任务开始时读取最新快照
+    let shared_config = Arc::new(RwLock::new(config));
 
-    // 注册 Runner
-    let mut config = config;
-    let _runner_id = loop {
+    // 创建控制面客户端（注册成功后复用于心跳，保持 Docker 配置状态）
+    let mut client = ControlPlaneClient::new(shared_config.read().await.clone());
+
+    // 注册 Runner（失败时重试）
+    let registration = loop {
         match client.register().await {
-            Ok(id) => {
-                info!("Registered successfully with ID: {}", id);
-                // 如果控制面返回了 Docker 配置，应用到本地配置
-                if let Some(docker_cfg) = client.get_docker_config().await {
-                    info!("Applying Docker configuration from control plane");
-                    config.apply_docker_config(docker_cfg);
-                }
-                break id;
+            Ok(registration) => {
+                info!("Registered successfully with ID: {}", registration.runner_id);
+                break registration;
             }
             Err(e) => {
                 error!("Registration failed: {}", e);
@@ -110,20 +103,73 @@ async fn main() -> Result<()> {
         }
     };
 
-    // 获取心跳间隔
-    let heartbeat_interval = config.heartbeat_interval();
+    // 应用控制面下发到共享配置：Docker 配置与 RabbitMQ 配置（以其为准）
+    {
+        let mut cfg = shared_config.write().await;
+        if let Some(docker_cfg) = client.get_docker_config().await {
+            info!("Applying Docker configuration from control plane");
+            cfg.apply_docker_config(docker_cfg);
+        }
+        if let Some(rabbitmq) = &registration.rabbitmq {
+            if let Some(exchange) = &rabbitmq.exchange
+                && !exchange.is_empty()
+            {
+                info!("Using control-plane exchange: {}", exchange);
+                cfg.message_queue.exchange = exchange.clone();
+            }
+            if let Some(queue_name) = &rabbitmq.queue_name
+                && !queue_name.is_empty()
+            {
+                info!("Using control-plane queue: {}", queue_name);
+                cfg.message_queue.queue_name_override = Some(queue_name.clone());
+            }
+            if let Some(pattern) = &rabbitmq.routing_key_pattern
+                && !pattern.is_empty()
+            {
+                info!("Using control-plane routing key pattern: {}", pattern);
+                cfg.message_queue.routing_key_pattern = Some(pattern.clone());
+            }
+        }
+    }
 
-    // 共享当前作业计数
+    // 心跳间隔：使用控制面下发的值（已在 client 内钳制到 5..=300 秒）
+    let heartbeat_interval = Duration::from_secs(registration.heartbeat_interval_secs);
+
+    // 共享当前作业计数（Worker 在任务开始/到达终态时增减，心跳任务读取上报）
     let current_jobs = Arc::new(AtomicUsize::new(0));
 
-    // 配置更新通知通道
-    let _config_update_rx = client.config_update_receiver();
+    // 订阅配置更新通知：心跳/注册收到的 Docker 配置变更同步写入共享配置
+    let mut config_update_rx = client.config_update_receiver();
+    let config_sync_handle = tokio::spawn({
+        let shared_config = shared_config.clone();
+        async move {
+            loop {
+                match config_update_rx.changed().await {
+                    Ok(_) => {
+                        // 先克隆出值，避免 watch::Ref 跨 await 持有（非 Send）
+                        let update = config_update_rx.borrow_and_update().clone();
+                        if let Some(docker_cfg) = update {
+                            info!("Applying Docker configuration update to shared config");
+                            shared_config.write().await.apply_docker_config(docker_cfg);
+                        }
+                    }
+                    Err(e) => {
+                        // 通道滞后（burst 丢失部分更新）或发送端关闭；
+                        // 通道仍可用时继续等待，已关闭则结束同步任务
+                        warn!("Config update channel error: {}", e);
+                        match config_update_rx.has_changed() {
+                            Ok(_) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        }
+    });
 
-    // 启动心跳任务
-    let config_for_heartbeat = config.clone();
+    // 启动心跳任务（复用注册用的 client，保持 Docker 配置与计数器状态）
     let current_jobs_hb = current_jobs.clone();
     let heartbeat_handle = tokio::spawn(async move {
-        let mut client = ControlPlaneClient::new(config_for_heartbeat);
         *client.current_jobs_mut() = current_jobs_hb;
         let mut interval = time::interval(heartbeat_interval);
 
@@ -143,10 +189,11 @@ async fn main() -> Result<()> {
     });
 
     // 启动任务 Worker
-    let config_arc = Arc::new(config);
+    let shared_config_w = shared_config.clone();
+    let current_jobs_w = current_jobs.clone();
     let worker_handle = tokio::spawn(async move {
         loop {
-            match TaskWorker::new(config_arc.clone()).await {
+            match TaskWorker::new(shared_config_w.clone(), current_jobs_w.clone()).await {
                 Ok(worker) => {
                     info!("Task worker started");
 
@@ -172,6 +219,9 @@ async fn main() -> Result<()> {
     tokio::select! {
         _ = heartbeat_handle => {
             error!("Heartbeat task exited unexpectedly");
+        }
+        _ = config_sync_handle => {
+            error!("Config sync task exited unexpectedly");
         }
         _ = worker_handle => {
             error!("Worker task exited unexpectedly");

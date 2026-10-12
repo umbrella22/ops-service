@@ -4,7 +4,6 @@
 
 use axum::http::StatusCode;
 use ops_service::error::{AppError, ErrorResponse};
-use serde_json;
 
 // ==================== 错误状态码测试 ====================
 
@@ -113,8 +112,11 @@ fn test_user_messages_for_server_errors() {
 
 #[test]
 fn test_user_messages_for_internal_errors() {
+    // 安全修复：Internal 的原始信息（可能含 SQL/路径等内部细节）只进日志，
+    // 客户端只收到通用文案
     let internal = AppError::Internal("Failed to process".to_string());
-    assert_eq!(internal.user_message(), "Internal server error: Failed to process");
+    assert_eq!(internal.user_message(), "Internal server error");
+    assert!(!internal.user_message().contains("Failed to process"));
 }
 
 // ==================== 错误码测试 ====================
@@ -309,32 +311,21 @@ fn test_error_chain() {
 fn test_error_matching() {
     let error = AppError::Unauthorized;
 
-    match error {
-        AppError::Unauthorized => assert!(true),
-        AppError::Forbidden => assert!(false),
-        _ => assert!(false),
-    }
+    assert!(matches!(error, AppError::Unauthorized));
 }
 
 #[test]
 fn test_error_matching_with_values() {
     let error = AppError::NotFound("User".to_string());
 
-    match error {
-        AppError::NotFound(resource) => assert_eq!(resource, "User"),
-        _ => assert!(false),
-    }
+    assert!(matches!(error, AppError::NotFound(ref resource) if resource == "User"));
 }
 
 #[test]
 fn test_error_matching_if_let() {
     let error = AppError::Validation("Email required".to_string());
 
-    if let AppError::Validation(msg) = error {
-        assert_eq!(msg, "Email required");
-    } else {
-        assert!(false);
-    }
+    assert!(matches!(error, AppError::Validation(ref msg) if msg == "Email required"));
 }
 
 // ==================== 特殊错误场景测试 ====================
@@ -347,9 +338,15 @@ fn test_empty_error_message() {
 
 #[test]
 fn test_long_error_message() {
+    // Internal 消息对客户端隐藏，长信息只保留在错误值本身（日志用）
     let long_msg = "A".repeat(1000);
     let error = AppError::Internal(long_msg.clone());
-    assert!(error.user_message().len() > 1000);
+    assert_eq!(error.user_message(), "Internal server error");
+    assert_eq!(format!("{}", error).len() > 1000, true);
+
+    // BadRequest 等面向用户的错误仍保留完整信息
+    let long_bad_request = AppError::BadRequest(long_msg.clone());
+    assert!(long_bad_request.user_message().len() >= 1000);
 }
 
 #[test]

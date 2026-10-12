@@ -9,17 +9,17 @@
 
 #![allow(deprecated)]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bollard::{
+    Docker,
     container::LogOutput,
     models::{
-        ContainerCreateBody as ContainerConfig, HostConfig, Mount, MountTypeEnum, ResourcesUlimits,
+        ContainerCreateBody as ContainerConfig, HostConfig, Mount, MountType, ResourcesUlimits,
     },
     query_parameters::{
         CreateContainerOptions, CreateImageOptions, ListContainersOptions, LogsOptions,
         RemoveContainerOptions, StartContainerOptions, StopContainerOptions, WaitContainerOptions,
     },
-    Docker,
 };
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -29,9 +29,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::config::{DockerConfig, ExecutionConfig};
+use crate::executor::sanitize_step_id;
 use crate::messages::{BuildStep, StepType};
 
+/// 容器输出收集上限（10 MiB），超过后停止累积并追加一次截断标记
+const MAX_CONTAINER_OUTPUT: usize = 10 * 1024 * 1024;
+
+/// 输出截断标记
+const TRUNCATION_MARKER: &str = "\n...[output truncated]\n";
+
 /// Docker 容器执行器
+#[derive(Clone)]
 pub struct DockerExecutor {
     /// Docker 客户端
     docker: Docker,
@@ -141,19 +149,28 @@ impl DockerExecutor {
     }
 
     /// 执行单个构建步骤
+    ///
+    /// 容器创建成功后，无论启动/等待/收集日志是否成功都会尽力移除容器，
+    /// 避免失败路径上容器泄漏。作业取消（cancel 触发）时先停止容器并返回
+    /// cancelled 结果，随后同样走移除路径。
     pub async fn execute_step(
         &self,
         step: &BuildStep,
         workspace_dir: &Path,
         env_vars: HashMap<String, String>,
+        cancel: &CancellationToken,
     ) -> Result<StepResult> {
         let image = self.get_image_for_step(step);
 
         // 确保镜像存在
         self.pull_image(&image).await?;
 
-        // 准备容器配置
-        let container_name = format!("ops-runner-{}-{}", step.id, uuid::Uuid::new_v4());
+        // 准备容器配置（step.id 来自外部消息，先清理再拼容器名）
+        let container_name = format!(
+            "ops-runner-{}-{}",
+            sanitize_step_id(&step.id),
+            uuid::Uuid::new_v4()
+        );
 
         // 构建命令
         let command = self.build_command(step)?;
@@ -211,11 +228,7 @@ impl DockerExecutor {
             },
             cap_add: {
                 let caps = self.config.security.capabilities_to_add();
-                if caps.is_empty() {
-                    None
-                } else {
-                    Some(caps)
-                }
+                if caps.is_empty() { None } else { Some(caps) }
             },
             ulimits: self.build_ulimits(),
             ..Default::default()
@@ -255,72 +268,179 @@ impl DockerExecutor {
             .await
             .context("Failed to create container")?;
 
+        // 启动、收集日志并等待退出（受超时与作业取消约束）
+        let timeout = step.timeout_secs.unwrap_or(self.config.default_timeout);
+        let result = self.start_and_collect(&container_name, timeout, cancel).await;
+
+        // 无论成功、失败、超时还是取消都移除容器，避免泄漏
+        self.remove_container(&container_name).await;
+
+        result
+    }
+
+    /// 启动容器，在超时与作业取消约束下收集日志并等待退出
+    ///
+    /// 使用 select! 同时等待日志流、容器退出、超时与作业取消：即使容器完全
+    /// 静默（不产生任何日志）超时也能触发，随后停止并移除容器；作业取消时
+    /// 立即停止容器（随后由调用方强制移除），返回取消结果。
+    async fn start_and_collect(
+        &self,
+        container_name: &str,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<StepResult> {
         info!("Starting container: {}", container_name);
 
         // 启动容器
         self.docker
-            .start_container(&container_name, None::<StartContainerOptions>)
+            .start_container(container_name, None::<StartContainerOptions>)
             .await
             .context("Failed to start container")?;
 
-        // 创建取消令牌用于超时控制
-        let cancel_token = CancellationToken::new();
-        let cancel_token_clone = cancel_token.clone();
+        let deadline = tokio::time::sleep(Duration::from_secs(timeout_secs));
+        tokio::pin!(deadline);
 
-        let timeout = step.timeout_secs.unwrap_or(self.config.default_timeout);
-        let timeout_handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(timeout)).await;
-            cancel_token_clone.cancel();
-        });
+        let log_fut = self.collect_logs(container_name);
+        let wait_fut = self.wait_for_container(container_name);
+        tokio::pin!(log_fut, wait_fut);
 
-        // 收集日志
-        let log_result = self.collect_logs(&container_name, &cancel_token).await;
-
-        // 取消超时任务
-        timeout_handle.abort();
-
-        if cancel_token.is_cancelled() {
-            let _ = self
-                .docker
-                .stop_container(
-                    &container_name,
-                    Some(StopContainerOptions {
-                        t: Some(10),
-                        signal: None,
-                    }),
-                )
-                .await;
+        /// select! 各分支的等待结果
+        enum Phase {
+            Logs(Result<String>),
+            Wait(i32),
+            TimedOut,
+            Cancelled,
         }
 
-        // 等待容器退出
-        let exit_code = self.wait_for_container(&container_name).await?;
+        let phase = tokio::select! {
+            res = &mut log_fut => Phase::Logs(res),
+            res = &mut wait_fut => Phase::Wait(res?),
+            _ = &mut deadline => Phase::TimedOut,
+            // 作业取消：停止容器（t=0 直接终止），日志流随之结束
+            _ = cancel.cancelled() => Phase::Cancelled,
+        };
 
-        // 移除容器
-        self.remove_container(&container_name).await;
+        match phase {
+            Phase::Cancelled => {
+                warn!(
+                    "Container step cancelled, stopping container: {}",
+                    container_name
+                );
+                let _ = self
+                    .docker
+                    .stop_container(
+                        container_name,
+                        Some(StopContainerOptions {
+                            t: Some(0),
+                            signal: None,
+                        }),
+                    )
+                    .await;
 
-        match log_result {
-            Ok(logs) => {
+                // 停止后日志流会自然结束，收集已有输出供排查
+                let logs = match log_fut.await {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("Failed to collect logs: {}", e);
+                        String::new()
+                    }
+                };
+
+                Ok(StepResult {
+                    exit_code: -1,
+                    stdout: logs,
+                    stderr: "Execution cancelled".to_string(),
+                    success: false,
+                    timed_out: false,
+                    cancelled: true,
+                })
+            }
+            Phase::TimedOut => {
+                warn!(
+                    "Container step timed out after {}s, stopping container: {}",
+                    timeout_secs, container_name
+                );
+                let _ = self
+                    .docker
+                    .stop_container(
+                        container_name,
+                        Some(StopContainerOptions {
+                            t: Some(10),
+                            signal: None,
+                        }),
+                    )
+                    .await;
+
+                // 停止后日志流会自然结束，收集已有输出
+                let logs = match log_fut.await {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("Failed to collect logs: {}", e);
+                        String::new()
+                    }
+                };
+
+                Ok(StepResult {
+                    exit_code: -1,
+                    stdout: logs,
+                    stderr: format!("Execution timed out after {}s", timeout_secs),
+                    success: false,
+                    timed_out: true,
+                    cancelled: false,
+                })
+            }
+            Phase::Wait(exit_code) => {
+                // 容器已退出，日志流随之结束
+                let logs = match log_fut.await {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("Failed to collect logs: {}", e);
+                        String::new()
+                    }
+                };
+
                 info!(
                     "Step completed: {}, exit_code: {}, output_size: {} bytes",
-                    step.id,
+                    container_name,
                     exit_code,
                     logs.len()
                 );
 
                 Ok(StepResult {
                     exit_code,
-                    stdout: logs.clone(),
+                    stdout: logs,
                     stderr: String::new(),
                     success: exit_code == 0,
+                    timed_out: false,
+                    cancelled: false,
                 })
             }
-            Err(e) => {
-                warn!("Failed to collect logs: {}", e);
+            Phase::Logs(res) => {
+                let logs = match res {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("Failed to collect logs: {}", e);
+                        String::new()
+                    }
+                };
+
+                // 日志流结束（通常容器已退出），等待退出码
+                let exit_code = wait_fut.await?;
+
+                info!(
+                    "Step completed: {}, exit_code: {}, output_size: {} bytes",
+                    container_name,
+                    exit_code,
+                    logs.len()
+                );
+
                 Ok(StepResult {
                     exit_code,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
+                    stdout: logs,
+                    stderr: String::new(),
                     success: exit_code == 0,
+                    timed_out: false,
+                    cancelled: false,
                 })
             }
         }
@@ -368,7 +488,7 @@ impl DockerExecutor {
     /// 构建 Docker 挂载点
     fn build_mounts(&self, workspace_dir: &Path) -> Vec<Mount> {
         vec![Mount {
-            typ: Some(MountTypeEnum::BIND),
+            typ: Some(MountType::BIND),
             source: Some(workspace_dir.to_string_lossy().to_string()),
             target: Some("/workspace".to_string()),
             read_only: Some(false),
@@ -405,12 +525,8 @@ impl DockerExecutor {
         }
     }
 
-    /// 收集容器日志
-    async fn collect_logs(
-        &self,
-        container_name: &str,
-        cancel_token: &CancellationToken,
-    ) -> Result<String> {
+    /// 收集容器日志（输出上限 10 MiB，超出后追加一次截断标记）
+    async fn collect_logs(&self, container_name: &str) -> Result<String> {
         let options = Some(LogsOptions {
             stdout: true,
             stderr: true,
@@ -421,20 +537,30 @@ impl DockerExecutor {
 
         let stream = self.docker.logs(container_name, options);
         let mut output = String::new();
+        let mut truncated = false;
         let mut stream = Box::pin(stream);
 
         while let Some(result) = stream.next().await {
-            if cancel_token.is_cancelled() {
-                break;
-            }
-
             match result {
                 Ok(log_bytes) => {
                     // LogOutput 转换为字符串
                     match log_bytes {
                         LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
-                            if let Ok(text) = std::str::from_utf8(&message) {
-                                output.push_str(text);
+                            if truncated {
+                                continue;
+                            }
+                            let text = String::from_utf8_lossy(&message);
+                            if output.len() + text.len() > MAX_CONTAINER_OUTPUT {
+                                // 截断到 UTF-8 字符边界，避免残缺字符
+                                let mut space = MAX_CONTAINER_OUTPUT - output.len();
+                                while space > 0 && !text.is_char_boundary(space) {
+                                    space -= 1;
+                                }
+                                output.push_str(&text[..space]);
+                                output.push_str(TRUNCATION_MARKER);
+                                truncated = true;
+                            } else {
+                                output.push_str(&text);
                             }
                         }
                         _ => {}
@@ -480,10 +606,11 @@ impl DockerExecutor {
         // 兜底：直接检查容器状态
         match self.docker.inspect_container(container_name, None).await {
             Ok(info) => {
-                if let Some(state) = info.state {
-                    if state.running == Some(false) && state.exit_code.is_some() {
-                        return Ok(state.exit_code.unwrap_or(-1) as i32);
-                    }
+                if let Some(state) = info.state
+                    && state.running == Some(false)
+                    && state.exit_code.is_some()
+                {
+                    return Ok(state.exit_code.unwrap_or(-1) as i32);
                 }
             }
             Err(e) => warn!("Failed to inspect container {}: {}", container_name, e),
@@ -516,12 +643,11 @@ impl DockerExecutor {
             .context("Failed to list containers")?;
 
         for container in containers {
-            if let Some(name) = container.names {
-                if name.iter().any(|n| n.starts_with("/ops-runner-")) {
-                    if let Some(id) = container.id {
-                        self.remove_container(&id).await;
-                    }
-                }
+            if let Some(name) = container.names
+                && name.iter().any(|n| n.starts_with("/ops-runner-"))
+                && let Some(id) = container.id
+            {
+                self.remove_container(&id).await;
             }
         }
 
@@ -540,6 +666,10 @@ pub struct StepResult {
     pub stderr: String,
     /// 是否成功
     pub success: bool,
+    /// 是否因超时而终止
+    pub timed_out: bool,
+    /// 是否因作业取消而终止
+    pub cancelled: bool,
 }
 
 /// 为 ExecutionConfig 添加 Docker 配置
@@ -625,9 +755,13 @@ mod tests {
             stdout: "hello world".to_string(),
             stderr: String::new(),
             success: true,
+            timed_out: false,
+            cancelled: false,
         };
 
         assert!(result.success);
+        assert!(!result.timed_out);
+        assert!(!result.cancelled);
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "hello world");
     }
